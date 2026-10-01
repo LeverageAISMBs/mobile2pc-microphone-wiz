@@ -79,9 +79,14 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Smartphone className="w-4 h-4 text-emerald-400" />
-            <span className="text-xs font-semibold text-neutral-200">
-              Mobile Transmitter Unit
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-semibold text-neutral-200">
+                Mobile Transmitter Unit
+              </span>
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-emerald-400">
+                {telemetry.audioEngineMode === 'worklet_thread' ? 'Worklet Thread' : 'Fallback'}
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center gap-1.5">

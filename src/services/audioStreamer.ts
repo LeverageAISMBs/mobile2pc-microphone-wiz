@@ -4,6 +4,7 @@ import { JitterBuffer } from './jitterBuffer';
 import { WebSocketTransport } from './transports/WebSocketTransport';
 import { WebBluetoothGattTransport } from './transports/WebBluetoothGattTransport';
 import { AudioTransport, TransportType, TransportState } from './transports/AudioTransport';
+import { AudioWorkletManager } from './worklets/AudioWorkletManager';
 
 export type AudioSourceType = 'mic' | 'sine1k' | 'pinknoise' | 'guitar' | 'drums';
 
@@ -25,6 +26,7 @@ export class AudioStreamer {
   private currentTransportType: TransportType = 'lan_wifi';
   private directGatewayIp?: string;
   private selectedInputDeviceId?: string;
+  private selectedOutputDeviceId: string = 'default';
   private bluetoothLatencyOffsetMs: number = 35;
   private isBluetoothBridgeActive: boolean = false;
 
@@ -35,6 +37,9 @@ export class AudioStreamer {
   private inputAnalyser: AnalyserNode | null = null;
   private outputAnalyser: AnalyserNode | null = null;
   private processorNode: ScriptProcessorNode | null = null;
+  private captureWorkletNode: AudioWorkletNode | null = null;
+  private outputAudioElement: HTMLAudioElement | null = null;
+  private mediaStreamDest: MediaStreamAudioDestinationNode | null = null;
   private micStream: MediaStream | null = null;
   private synthInterval: number | null = null;
 
@@ -158,7 +163,19 @@ export class AudioStreamer {
       this.outputAnalyser.connect(this.audioCtx.destination);
 
       // Connect JitterBuffer output
-      this.jitterBuffer.setAudioContext(this.audioCtx, this.outputGainNode);
+      await this.jitterBuffer.setAudioContext(this.audioCtx, this.outputGainNode);
+
+      // Universal Output Device Bridge (for browsers with HTMLAudioElement setSinkId)
+      try {
+        this.mediaStreamDest = this.audioCtx.createMediaStreamDestination();
+        this.outputAnalyser.connect(this.mediaStreamDest);
+        this.outputAudioElement = new Audio();
+        this.outputAudioElement.srcObject = this.mediaStreamDest.stream;
+        this.outputAudioElement.volume = 1.0;
+        this.outputAudioElement.play().catch(() => {});
+      } catch (e) {
+        // fallback
+      }
 
       return true;
     } catch (err: unknown) {
@@ -206,16 +223,73 @@ export class AudioStreamer {
   }
 
   public async setAudioSink(deviceId: string): Promise<boolean> {
-    if (!this.audioCtx) return false;
-    try {
-      if ('setSinkId' in this.audioCtx && typeof (this.audioCtx as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId === 'function') {
-        await (this.audioCtx as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(deviceId);
-        return true;
+    this.selectedOutputDeviceId = deviceId;
+    let success = false;
+
+    // 1. Try standard W3C Web Audio setSinkId on AudioContext (Chrome 110+, Edge)
+    if (
+      this.audioCtx &&
+      'setSinkId' in this.audioCtx &&
+      typeof (this.audioCtx as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId === 'function'
+    ) {
+      try {
+        const targetId = deviceId === 'default' ? '' : deviceId;
+        await (this.audioCtx as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(targetId);
+        success = true;
+      } catch (e) {
+        console.warn('[PulseCast] audioCtx.setSinkId failed, trying HTMLAudioElement bridge:', e);
       }
-      return false;
-    } catch (e) {
-      console.warn('AudioContext.setSinkId not supported or denied:', e);
-      return false;
+    }
+
+    // 2. Try HTMLAudioElement bridge with setSinkId (universal fallback)
+    if (
+      !success &&
+      this.outputAudioElement &&
+      'setSinkId' in this.outputAudioElement &&
+      typeof (this.outputAudioElement as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId === 'function'
+    ) {
+      try {
+        const targetId = deviceId === 'default' ? '' : deviceId;
+        await (this.outputAudioElement as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(targetId);
+        await this.outputAudioElement.play();
+        success = true;
+      } catch (e) {
+        console.warn('[PulseCast] audioElement.setSinkId failed:', e);
+      }
+    }
+
+    return success;
+  }
+
+  private sendEncodedAudioFrame(inputL: Float32Array, inputR: Float32Array) {
+    if (!this.isStreaming) return;
+
+    const len = inputL.length;
+    const leftToSend = new Float32Array(len);
+    const rightToSend = new Float32Array(len);
+
+    if (!this.isMuted) {
+      leftToSend.set(inputL);
+      rightToSend.set(inputR);
+    }
+
+    const packet = CodecEngine.encode(
+      leftToSend,
+      rightToSend,
+      this.seq++,
+      performance.now(),
+      this.audioCtx?.sampleRate || 48000,
+      this.bufferConfig.channels,
+      this.codec
+    );
+
+    this.transport.send(packet.data);
+
+    if (this.isLoopbackMonitor && this.role === 'transmitter') {
+      const decoded = CodecEngine.decode(packet.data);
+      if (decoded) {
+        this.jitterBuffer.pushPacket(decoded);
+      }
     }
   }
 
@@ -258,46 +332,41 @@ export class AudioStreamer {
       this.startSyntheticSource();
     }
 
-    // Packetizing processor
-    const bufferSize = 512; // ~10.6ms @ 48kHz
-    this.processorNode = this.audioCtx.createScriptProcessor(bufferSize, 2, 2);
-    this.inputGainNode.connect(this.processorNode);
-    this.processorNode.connect(this.audioCtx.destination);
-
-    this.processorNode.onaudioprocess = (e) => {
-      if (!this.isStreaming) return;
-
-      const inputL = e.inputBuffer.getChannelData(0);
-      const inputR = e.inputBuffer.getChannelData(1);
-      const len = inputL.length;
-
-      const leftToSend = new Float32Array(len);
-      const rightToSend = new Float32Array(len);
-
-      if (!this.isMuted) {
-        leftToSend.set(inputL);
-        rightToSend.set(inputR);
-      }
-
-      const packet = CodecEngine.encode(
-        leftToSend,
-        rightToSend,
-        this.seq++,
-        performance.now(),
-        this.audioCtx?.sampleRate || 48000,
-        this.bufferConfig.channels,
-        this.codec
-      );
-
-      this.transport.send(packet.data);
-
-      if (this.isLoopbackMonitor && this.role === 'transmitter') {
-        const decoded = CodecEngine.decode(packet.data);
-        if (decoded) {
-          this.jitterBuffer.pushPacket(decoded);
+    // Attempt zero-jitter AudioWorklet capture node on the high-priority audio thread
+    try {
+      const workletRegistered = await AudioWorkletManager.registerWorklets(this.audioCtx);
+      if (workletRegistered) {
+        this.captureWorkletNode = AudioWorkletManager.createCaptureNode(this.audioCtx);
+        if (this.captureWorkletNode) {
+          this.inputGainNode.connect(this.captureWorkletNode);
+          this.captureWorkletNode.connect(this.audioCtx.destination);
+          this.captureWorkletNode.port.onmessage = (event) => {
+            const data = event.data;
+            if (data && data.type === 'CAPTURE_CHUNK' && this.isStreaming) {
+              this.sendEncodedAudioFrame(data.left, data.right);
+            }
+          };
         }
       }
-    };
+    } catch (e) {
+      console.warn('[PulseCast] Capture worklet registration failed, using ScriptProcessor fallback:', e);
+      this.captureWorkletNode = null;
+    }
+
+    // Fallback: ScriptProcessorNode if AudioWorklet is not available
+    if (!this.captureWorkletNode) {
+      const bufferSize = 512; // ~10.6ms @ 48kHz
+      this.processorNode = this.audioCtx.createScriptProcessor(bufferSize, 2, 2);
+      this.inputGainNode.connect(this.processorNode);
+      this.processorNode.connect(this.audioCtx.destination);
+
+      this.processorNode.onaudioprocess = (e) => {
+        if (!this.isStreaming) return;
+        const inputL = e.inputBuffer.getChannelData(0);
+        const inputR = e.inputBuffer.getChannelData(1);
+        this.sendEncodedAudioFrame(inputL, inputR);
+      };
+    }
 
     this.startTelemetryLoop();
   }
@@ -376,6 +445,15 @@ export class AudioStreamer {
 
   public stopTransmitting() {
     this.isStreaming = false;
+    if (this.captureWorkletNode) {
+      try {
+        this.captureWorkletNode.disconnect();
+      } catch (e) {
+        // ignore
+      }
+      this.captureWorkletNode = null;
+    }
+
     if (this.processorNode) {
       try {
         this.processorNode.disconnect();
@@ -520,6 +598,11 @@ export class AudioStreamer {
         telemetry.ble = transportTel.ble;
       }
 
+      if (this.role === 'transmitter') {
+        telemetry.audioEngineMode = this.captureWorkletNode ? 'worklet_thread' : 'script_processor_fallback';
+      }
+      telemetry.activeAudioSinkDevice = this.selectedOutputDeviceId;
+
       this.callbacks.onTelemetry(telemetry);
     }, 100);
   }
@@ -544,6 +627,9 @@ export class AudioStreamer {
 
   public setMute(muted: boolean) {
     this.isMuted = muted;
+    if (this.captureWorkletNode) {
+      this.captureWorkletNode.port.postMessage({ type: 'SET_MUTE', muted });
+    }
   }
 
   public setLoopbackMonitor(enabled: boolean) {
@@ -613,6 +699,16 @@ export class AudioStreamer {
       this.telemetryInterval = null;
     }
     this.transport.disconnect();
+    this.jitterBuffer.destroy();
+    if (this.outputAudioElement) {
+      try {
+        this.outputAudioElement.pause();
+        this.outputAudioElement.srcObject = null;
+      } catch (e) {
+        // ignore
+      }
+      this.outputAudioElement = null;
+    }
     if (this.audioCtx) {
       this.audioCtx.close();
       this.audioCtx = null;

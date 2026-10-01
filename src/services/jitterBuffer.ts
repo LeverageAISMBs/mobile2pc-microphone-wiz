@@ -1,5 +1,6 @@
 import { BufferConfig, StreamTelemetry } from '../types/audio';
 import { DecodedAudio } from './codecEngine';
+import { AudioWorkletManager } from './worklets/AudioWorkletManager';
 
 interface QueuedAudioFrame {
   seq: number;
@@ -19,6 +20,9 @@ export class JitterBuffer {
   private lastPlayedSeq: number = 0;
   private lastFrame: QueuedAudioFrame | null = null;
 
+  // AudioWorklet Node for zero-jitter audio thread ring buffer playout
+  private workletNode: AudioWorkletNode | null = null;
+
   // Telemetry metrics
   private underruns: number = 0;
   private overruns: number = 0;
@@ -36,10 +40,33 @@ export class JitterBuffer {
     this.config = config;
   }
 
-  public setAudioContext(ctx: AudioContext, outputNode: AudioNode) {
+  public async setAudioContext(ctx: AudioContext, outputNode: AudioNode) {
     this.audioCtx = ctx;
     this.outputNode = outputNode;
     this.nextPlayTime = ctx.currentTime + this.config.bufferSizeMs / 1000;
+
+    // Initialize AudioWorklet on dedicated realtime audio thread
+    try {
+      const isRegistered = await AudioWorkletManager.registerWorklets(ctx);
+      if (isRegistered) {
+        this.workletNode = AudioWorkletManager.createPlayoutNode(ctx);
+        if (this.workletNode) {
+          this.workletNode.connect(outputNode);
+          this.workletNode.port.onmessage = (event) => {
+            const data = event.data;
+            if (data && data.type === 'WORKLET_METRICS') {
+              this.underruns = data.underruns;
+              this.overruns = data.overruns;
+              const samples = data.availableSamples || 0;
+              this.currentBufferMs = (samples / (this.config.sampleRate || 48000)) * 1000;
+            }
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('[JitterBuffer] Playout worklet initialization fallback:', e);
+      this.workletNode = null;
+    }
   }
 
   public updateConfig(newConfig: Partial<BufferConfig>) {
@@ -67,6 +94,18 @@ export class JitterBuffer {
       return;
     }
 
+    // AudioWorklet zero-jitter path: Dispatch directly to the dedicated audio thread
+    if (this.workletNode) {
+      this.workletNode.port.postMessage({
+        type: 'PUSH_PCM',
+        left: decoded.leftChannel,
+        right: decoded.rightChannel,
+      });
+      this.lastPlayedSeq = decoded.seq;
+      return;
+    }
+
+    // Fallback path: Main thread scheduling via AudioBufferSourceNode
     const frame: QueuedAudioFrame = {
       seq: decoded.seq,
       timestamp: decoded.timestamp,
@@ -244,6 +283,7 @@ export class JitterBuffer {
       rmsDbfs: rms,
       isClipping: peakL >= -0.1 || peakR >= -0.1,
       networkQuality,
+      audioEngineMode: this.workletNode ? 'worklet_thread' : 'script_processor_fallback',
     };
   }
 
@@ -252,6 +292,23 @@ export class JitterBuffer {
     this.overruns = 0;
     this.droppedPackets = 0;
     this.packetsReceived = 0;
+    this.queue = [];
+    if (this.workletNode) {
+      this.workletNode.port.postMessage({ type: 'RESET' });
+    }
+  }
+
+  public destroy() {
+    if (this.workletNode) {
+      try {
+        this.workletNode.disconnect();
+      } catch (e) {
+        // ignore
+      }
+      this.workletNode = null;
+    }
+    this.audioCtx = null;
+    this.outputNode = null;
     this.queue = [];
   }
 }

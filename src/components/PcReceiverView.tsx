@@ -83,8 +83,10 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
   const [outputDevices, setOutputDevices] = useState<{ deviceId: string; label: string }[]>([]);
   const [selectedSink, setSelectedSink] = useState<string>('default');
   const [sinkSuccess, setSinkSuccess] = useState<boolean>(false);
+  const [isRefreshingSinks, setIsRefreshingSinks] = useState<boolean>(false);
 
-  useEffect(() => {
+  const fetchAudioOutputs = () => {
+    setIsRefreshingSinks(true);
     if (typeof navigator !== 'undefined' && navigator.mediaDevices?.enumerateDevices) {
       navigator.mediaDevices
         .enumerateDevices()
@@ -99,8 +101,17 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
             setOutputDevices(audioOutputs);
           }
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          setTimeout(() => setIsRefreshingSinks(false), 400);
+        });
+    } else {
+      setIsRefreshingSinks(false);
     }
+  };
+
+  useEffect(() => {
+    fetchAudioOutputs();
   }, []);
 
   const handleDeviceChange = async (deviceId: string) => {
@@ -109,7 +120,7 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
       const ok = await onSelectAudioSink(deviceId);
       if (ok) {
         setSinkSuccess(true);
-        setTimeout(() => setSinkSuccess(false), 2000);
+        setTimeout(() => setSinkSuccess(false), 2500);
       }
     }
   };
@@ -188,7 +199,30 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
                   </option>
                 ))}
               </select>
-              {sinkSuccess && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+              <button
+                onClick={fetchAudioOutputs}
+                title="Refresh connected audio output devices"
+                className="p-1 rounded hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 transition-colors"
+              >
+                <RefreshCw className={`w-3 h-3 ${isRefreshingSinks ? 'animate-spin' : ''}`} />
+              </button>
+              {sinkSuccess && (
+                <span className="flex items-center gap-1 text-[11px] font-mono text-emerald-400">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Routed</span>
+                </span>
+              )}
+            </div>
+
+            {/* Audio Engine Mode Indicator (Sprint 4: AudioWorklet) */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-neutral-950 border border-neutral-800 text-xs font-mono">
+              <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-neutral-400">Engine:</span>
+              <span className="text-emerald-400 font-semibold">
+                {telemetry.audioEngineMode === 'worklet_thread'
+                  ? 'AudioWorklet (Realtime Thread)'
+                  : 'ScriptProcessor Fallback'}
+              </span>
             </div>
 
             <button

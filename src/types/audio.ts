@@ -49,6 +49,8 @@ export interface StreamTelemetry {
   directHopLatencyMs?: number;
   gatewayIp?: string;
   ble?: BleSlicerTelemetry;
+  audioEngineMode?: 'worklet_thread' | 'script_processor_fallback';
+  activeAudioSinkDevice?: string;
 }
 
 export interface HotspotProfile {
