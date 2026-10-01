@@ -1,6 +1,8 @@
 import { AudioCodec, BufferConfig, StreamTelemetry } from '../types/audio';
 import { CodecEngine } from './codecEngine';
 import { JitterBuffer } from './jitterBuffer';
+import { WebSocketTransport } from './transports/WebSocketTransport';
+import { TransportType, TransportState } from './transports/AudioTransport';
 
 export type AudioSourceType = 'mic' | 'sine1k' | 'pinknoise' | 'guitar' | 'drums';
 
@@ -8,14 +10,19 @@ export interface StreamerCallbacks {
   onTelemetry: (telemetry: StreamTelemetry) => void;
   onConnectionChange: (connected: boolean, peerCount: { rx: number; tx: number }) => void;
   onError: (err: string) => void;
+  onTransportStateChange?: (state: TransportState, error?: string) => void;
 }
 
 export class AudioStreamer {
   private role: 'transmitter' | 'receiver';
   private sessionCode: string;
   private audioCtx: AudioContext | null = null;
-  private ws: WebSocket | null = null;
   private callbacks: StreamerCallbacks;
+
+  // Transport Layer
+  private transport: WebSocketTransport;
+  private currentTransportType: TransportType = 'lan_wifi';
+  private directGatewayIp?: string;
 
   // Audio Nodes
   private inputGainNode: GainNode | null = null;
@@ -29,7 +36,6 @@ export class AudioStreamer {
 
   // Signal Generator state
   private activeSource: AudioSourceType = 'mic';
-  private synthPhase: number = 0;
   private drumBeatIndex: number = 0;
 
   // Processing state
@@ -51,26 +57,68 @@ export class AudioStreamer {
   // Services
   private jitterBuffer: JitterBuffer;
 
-  // Telemetry tracking
-  private bytesSentLastSec: number = 0;
-  private bytesReceivedLastSec: number = 0;
-  private bitrateKbps: number = 0;
+  // Telemetry loop
   private telemetryInterval: number | null = null;
-  private pingInterval: number | null = null;
-  private lastPingSentTime: number = 0;
-  private smoothedRtt: number = 5.2;
 
-  constructor(role: 'transmitter' | 'receiver', sessionCode: string, callbacks: StreamerCallbacks) {
+  constructor(
+    role: 'transmitter' | 'receiver',
+    sessionCode: string,
+    callbacks: StreamerCallbacks,
+    transportType: TransportType = 'lan_wifi',
+    directGatewayIp?: string
+  ) {
     this.role = role;
     this.sessionCode = sessionCode;
     this.callbacks = callbacks;
+    this.currentTransportType = transportType;
+    this.directGatewayIp = directGatewayIp;
     this.jitterBuffer = new JitterBuffer(this.bufferConfig);
+
+    this.transport = new WebSocketTransport({
+      type: transportType === 'mobile_hotspot' ? 'mobile_hotspot' : 'lan_wifi',
+      sessionCode,
+      role,
+      directGatewayIp,
+    });
+
+    this.setupTransportListeners();
+  }
+
+  private setupTransportListeners() {
+    this.transport.onPacket((data) => {
+      const decoded = CodecEngine.decode(data);
+      if (decoded) {
+        this.jitterBuffer.pushPacket(decoded);
+      }
+    });
+
+    this.transport.onControlMessage((msg) => {
+      if (msg.type === 'SESSION_PEERS') {
+        this.callbacks.onConnectionChange(true, {
+          rx: Number(msg.receiversCount) || 1,
+          tx: Number(msg.transmittersCount) || 0,
+        });
+      }
+    });
+
+    this.transport.onStateChange((state, error) => {
+      const isConnected = state === 'connected';
+      this.callbacks.onConnectionChange(isConnected, { rx: 1, tx: 0 });
+      if (this.callbacks.onTransportStateChange) {
+        this.callbacks.onTransportStateChange(state, error);
+      }
+      if (error) {
+        this.callbacks.onError(error);
+      }
+    });
   }
 
   public async initAudio(): Promise<boolean> {
     try {
       if (!this.audioCtx) {
-        const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const AudioContextClass =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         this.audioCtx = new AudioContextClass({
           sampleRate: 48000,
           latencyHint: 'interactive',
@@ -116,66 +164,33 @@ export class AudioStreamer {
     }
   }
 
-  public connectWebSocket(customHost?: string) {
-    if (this.ws) {
-      try {
-        this.ws.close();
-      } catch (e) {
-        // ignore
+  public async connectTransport(
+    type: TransportType = this.currentTransportType,
+    gatewayIp?: string,
+    customHost?: string
+  ) {
+    this.currentTransportType = type;
+    this.directGatewayIp = gatewayIp;
+
+    await this.transport.connect({
+      type: type === 'mobile_hotspot' ? 'mobile_hotspot' : 'lan_wifi',
+      directGatewayIp: gatewayIp,
+      customHost,
+    });
+  }
+
+  public async setAudioSink(deviceId: string): Promise<boolean> {
+    if (!this.audioCtx) return false;
+    try {
+      if ('setSinkId' in this.audioCtx && typeof (this.audioCtx as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId === 'function') {
+        await (this.audioCtx as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(deviceId);
+        return true;
       }
+      return false;
+    } catch (e) {
+      console.warn('AudioContext.setSinkId not supported or denied:', e);
+      return false;
     }
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = customHost || window.location.host;
-    const device = this.role === 'transmitter' ? 'Mobile Transmitter' : 'PC Workstation';
-    const platform = /Android|iPhone|iPad/i.test(navigator.userAgent) ? 'android' : 'windows';
-
-    const wsUrl = `${protocol}//${host}/ws/audio?code=${encodeURIComponent(
-      this.sessionCode
-    )}&role=${this.role}&device=${encodeURIComponent(device)}&platform=${platform}`;
-
-    this.ws = new WebSocket(wsUrl);
-    this.ws.binaryType = 'arraybuffer';
-
-    this.ws.onopen = () => {
-      this.callbacks.onConnectionChange(true, { rx: 1, tx: 1 });
-      this.startPingInterval();
-    };
-
-    this.ws.onmessage = (event) => {
-      if (typeof event.data === 'string') {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'PONG') {
-            const rtt = performance.now() - msg.clientTime;
-            this.smoothedRtt = this.smoothedRtt * 0.75 + rtt * 0.25;
-            this.jitterBuffer.updateRtt(this.smoothedRtt);
-          } else if (msg.type === 'SESSION_PEERS') {
-            this.callbacks.onConnectionChange(true, {
-              rx: msg.receiversCount,
-              tx: msg.transmittersCount,
-            });
-          }
-        } catch (e) {
-          // ignore
-        }
-      } else if (event.data instanceof ArrayBuffer) {
-        this.bytesReceivedLastSec += event.data.byteLength;
-        const decoded = CodecEngine.decode(event.data);
-        if (decoded) {
-          this.jitterBuffer.pushPacket(decoded);
-        }
-      }
-    };
-
-    this.ws.onclose = () => {
-      this.callbacks.onConnectionChange(false, { rx: 0, tx: 0 });
-      this.stopPingInterval();
-    };
-
-    this.ws.onerror = () => {
-      this.callbacks.onError('WebSocket connection error on local network stream.');
-    };
   }
 
   public async startTransmitting(sourceType: AudioSourceType = 'mic') {
@@ -200,7 +215,9 @@ export class AudioStreamer {
         sourceNode.connect(this.inputGainNode);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        this.callbacks.onError(`Microphone permission denied or unavailable: ${msg}. Falling back to 1kHz Reference Tone.`);
+        this.callbacks.onError(
+          `Microphone permission denied or unavailable: ${msg}. Falling back to 1kHz Reference Tone.`
+        );
         this.activeSource = 'sine1k';
         this.startSyntheticSource();
         return;
@@ -213,7 +230,7 @@ export class AudioStreamer {
     const bufferSize = 512; // ~10.6ms @ 48kHz
     this.processorNode = this.audioCtx.createScriptProcessor(bufferSize, 2, 2);
     this.inputGainNode.connect(this.processorNode);
-    this.processorNode.connect(this.audioCtx.destination); // Required for script processor to pump
+    this.processorNode.connect(this.audioCtx.destination);
 
     this.processorNode.onaudioprocess = (e) => {
       if (!this.isStreaming) return;
@@ -222,7 +239,6 @@ export class AudioStreamer {
       const inputR = e.inputBuffer.getChannelData(1);
       const len = inputL.length;
 
-      // Handle muting
       const leftToSend = new Float32Array(len);
       const rightToSend = new Float32Array(len);
 
@@ -231,7 +247,6 @@ export class AudioStreamer {
         rightToSend.set(inputR);
       }
 
-      // Encode frame
       const packet = CodecEngine.encode(
         leftToSend,
         rightToSend,
@@ -242,14 +257,8 @@ export class AudioStreamer {
         this.codec
       );
 
-      this.bytesSentLastSec += packet.byteLength;
+      this.transport.send(packet.data);
 
-      // Send over WebSocket
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(packet.data);
-      }
-
-      // If loopback monitor is enabled on transmitter side
       if (this.isLoopbackMonitor && this.role === 'transmitter') {
         const decoded = CodecEngine.decode(packet.data);
         if (decoded) {
@@ -283,27 +292,21 @@ export class AudioStreamer {
     }
   }
 
-  /**
-   * Generates studio test signals when mic is offline or for audio testing
-   */
   private startSyntheticSource() {
     if (!this.audioCtx || !this.inputGainNode) return;
-
     if (this.synthInterval) clearInterval(this.synthInterval);
 
-    // Audio node for tone generator
     const osc = this.audioCtx.createOscillator();
     const synthGain = this.audioCtx.createGain();
 
     if (this.activeSource === 'sine1k') {
       osc.type = 'sine';
       osc.frequency.setValueAtTime(1000, this.audioCtx.currentTime);
-      synthGain.gain.value = 0.25; // -12 dBFS calibration
+      synthGain.gain.value = 0.25;
       osc.connect(synthGain);
       synthGain.connect(this.inputGainNode);
       osc.start();
     } else if (this.activeSource === 'pinknoise') {
-      // Pink noise generator via custom buffer
       const bufferSize = this.audioCtx.sampleRate * 2;
       const noiseBuffer = this.audioCtx.createBuffer(1, bufferSize, this.audioCtx.sampleRate);
       const output = noiseBuffer.getChannelData(0);
@@ -312,10 +315,10 @@ export class AudioStreamer {
         const white = Math.random() * 2 - 1;
         b0 = 0.99886 * b0 + white * 0.0555179;
         b1 = 0.99332 * b1 + white * 0.0750759;
-        b2 = 0.96900 * b2 + white * 0.1538520;
-        b3 = 0.86650 * b3 + white * 0.3104856;
-        b4 = 0.55000 * b4 + white * 0.5329522;
-        b5 = -0.7616 * b5 - white * 0.0168980;
+        b2 = 0.96900 * b2 + white * 0.153852;
+        b3 = 0.8665 * b3 + white * 0.3104856;
+        b4 = 0.55 * b4 + white * 0.5329522;
+        b5 = -0.7616 * b5 - white * 0.016898;
         output[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.06;
         b6 = white * 0.115926;
       }
@@ -327,8 +330,8 @@ export class AudioStreamer {
       synthGain.connect(this.inputGainNode);
       whiteNoiseNode.start();
     } else if (this.activeSource === 'guitar' || this.activeSource === 'drums') {
-      // Periodic synthetic musical transients
-      const chordFreqs = this.activeSource === 'guitar' ? [220, 277.18, 329.63, 440] : [65, 130, 200, 800];
+      const chordFreqs =
+        this.activeSource === 'guitar' ? [220, 277.18, 329.63, 440] : [65, 130, 200, 800];
       this.synthInterval = window.setInterval(() => {
         if (!this.audioCtx || !this.inputGainNode || !this.isStreaming) return;
         const now = this.audioCtx.currentTime;
@@ -359,13 +362,8 @@ export class AudioStreamer {
     if (this.telemetryInterval) clearInterval(this.telemetryInterval);
 
     this.telemetryInterval = window.setInterval(() => {
-      // Calculate kbps
-      const bytes = this.role === 'transmitter' ? this.bytesSentLastSec : this.bytesReceivedLastSec;
-      this.bitrateKbps = (bytes * 8) / 1000;
-      this.bytesSentLastSec = 0;
-      this.bytesReceivedLastSec = 0;
+      const transportTel = this.transport.getTelemetry();
 
-      // Read audio levels
       let peakL = -60;
       let peakR = -60;
       let rms = -60;
@@ -384,31 +382,31 @@ export class AudioStreamer {
         }
         const rmsLinear = Math.sqrt(sumSq / timeData.length);
         peakL = maxVal > 0.0001 ? Math.max(-60, Math.round(20 * Math.log10(maxVal))) : -60;
-        peakR = peakL; // Single analyser estimates stereo peak
+        peakR = peakL;
         rms = rmsLinear > 0.0001 ? Math.max(-60, Math.round(20 * Math.log10(rmsLinear))) : -60;
       }
 
-      const telemetry = this.jitterBuffer.getTelemetry(this.bitrateKbps, peakL, peakR, rms);
+      const telemetry = this.jitterBuffer.getTelemetry(
+        transportTel.throughputKbps,
+        peakL,
+        peakR,
+        rms
+      );
+      telemetry.rttMs = transportTel.rttMs;
       telemetry.packetsSent = this.seq;
+      telemetry.transportType = this.currentTransportType;
+      telemetry.transportState = this.transport.state;
+      telemetry.directHopLatencyMs = transportTel.hopLatencyMs;
+      telemetry.gatewayIp = this.directGatewayIp;
+
+      // In hotspot mode, adjust estimated audio latency for 1-hop link
+      if (this.currentTransportType === 'mobile_hotspot') {
+        telemetry.audioLatencyMs = Math.round((transportTel.rttMs * 0.4 + telemetry.bufferFillMs + 2.0) * 10) / 10;
+        telemetry.signalRssi = transportTel.rssi;
+      }
+
       this.callbacks.onTelemetry(telemetry);
     }, 100);
-  }
-
-  private startPingInterval() {
-    this.stopPingInterval();
-    this.pingInterval = window.setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.lastPingSentTime = performance.now();
-        this.ws.send(JSON.stringify({ type: 'PING', clientTime: this.lastPingSentTime }));
-      }
-    }, 1500);
-  }
-
-  private stopPingInterval() {
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
-      this.pingInterval = null;
-    }
   }
 
   public setInputGain(gainLinear: number) {
@@ -439,17 +437,18 @@ export class AudioStreamer {
 
   public setCodec(codec: AudioCodec) {
     this.codec = codec;
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'CONFIG_UPDATE', codec }));
-    }
+    this.transport.sendControl({ type: 'CONFIG_UPDATE', codec });
   }
 
   public updateBufferConfig(config: Partial<BufferConfig>) {
     this.bufferConfig = { ...this.bufferConfig, ...config };
     this.jitterBuffer.updateConfig(this.bufferConfig);
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'CONFIG_UPDATE', bufferMs: this.bufferConfig.bufferSizeMs }));
-    }
+    this.transport.sendControl({ type: 'CONFIG_UPDATE', bufferMs: this.bufferConfig.bufferSizeMs });
+  }
+
+  public resetStats() {
+    this.seq = 0;
+    this.jitterBuffer.resetStats();
   }
 
   public getInputAnalyser(): AnalyserNode | null {
@@ -462,15 +461,11 @@ export class AudioStreamer {
 
   public destroy() {
     this.stopTransmitting();
-    this.stopPingInterval();
     if (this.telemetryInterval) {
       clearInterval(this.telemetryInterval);
       this.telemetryInterval = null;
     }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    this.transport.disconnect();
     if (this.audioCtx) {
       this.audioCtx.close();
       this.audioCtx = null;

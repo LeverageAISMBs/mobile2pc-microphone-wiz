@@ -1,42 +1,37 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StreamTelemetry, AudioCodec, BufferConfig } from './types/audio';
 import { AudioStreamer, AudioSourceType } from './services/audioStreamer';
+import { TransportType } from './services/transports/AudioTransport';
 import { PcReceiverView } from './components/PcReceiverView';
 import { MobileTransmitterView } from './components/MobileTransmitterView';
 import { DriverFrameworkHub } from './components/DriverFrameworkHub';
 import { DevicePairingModal } from './components/DevicePairingModal';
-import { AudioVisualizer } from './components/AudioVisualizer';
+import { HotspotWizardModal } from './components/HotspotWizardModal';
 import {
   Radio,
   Wifi,
-  Monitor,
-  Smartphone,
-  Cpu,
   QrCode,
-  Volume2,
-  VolumeX,
+  Flame,
+  Split,
   Play,
   Square,
-  Split,
-  Layers,
   AlertTriangle,
-  Info,
 } from 'lucide-react';
 
 export default function App() {
-  // Navigation / View modes:
-  // 'receiver': PC Workstation Host view
-  // 'transmitter': Mobile phone transmitter view
-  // 'workbench': Dual split simulator (transmitter + receiver side by side on one screen)
-  // 'drivers': Open-source virtual audio driver setup guide
   const [activeTab, setActiveTab] = useState<'receiver' | 'transmitter' | 'workbench' | 'drivers'>('receiver');
 
   // Session & Connection state
   const [sessionCode, setSessionCode] = useState<string>('PULSE-89');
   const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
+  const [isHotspotWizardOpen, setIsHotspotWizardOpen] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [peerCounts, setPeerCounts] = useState({ rx: 1, tx: 0 });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Transport State
+  const [currentTransport, setCurrentTransport] = useState<TransportType>('lan_wifi');
+  const [directGatewayIp, setDirectGatewayIp] = useState<string | undefined>(undefined);
 
   // Audio Processing State
   const [isTransmitting, setIsTransmitting] = useState(false);
@@ -80,6 +75,7 @@ export default function App() {
     rmsDbfs: -60,
     isClipping: false,
     networkQuality: 'excellent',
+    transportType: 'lan_wifi',
   });
 
   // Streamer instance ref
@@ -92,9 +88,18 @@ export default function App() {
       const params = new URLSearchParams(window.location.search);
       const roleParam = params.get('role');
       const codeParam = params.get('code');
+      const transportParam = params.get('transport');
 
       if (codeParam) {
         setSessionCode(codeParam.toUpperCase());
+      }
+
+      if (transportParam === 'mobile_hotspot') {
+        setCurrentTransport('mobile_hotspot');
+        // Apply optimized hotspot preset on mobile receiver
+        setBufferConfig((prev) => ({ ...prev, bufferSizeMs: 5, frameSizeMs: 2.5 }));
+        setActiveCodec('pcm24');
+        setFrameSizeMs(2.5);
       }
 
       if (roleParam === 'transmitter') {
@@ -105,7 +110,7 @@ export default function App() {
     }
   }, []);
 
-  // Initialize audio streamer
+  // Initialize audio streamer whenever sessionCode, activeTab, or transport changes
   useEffect(() => {
     const role = activeTab === 'transmitter' ? 'transmitter' : 'receiver';
 
@@ -113,31 +118,36 @@ export default function App() {
       streamerRef.current.destroy();
     }
 
-    const streamer = new AudioStreamer(role, sessionCode, {
-      onTelemetry: (t) => {
-        setTelemetry(t);
+    const streamer = new AudioStreamer(
+      role,
+      sessionCode,
+      {
+        onTelemetry: (t) => {
+          setTelemetry(t);
+        },
+        onConnectionChange: (connected, peers) => {
+          setIsConnected(connected);
+          setPeerCounts(peers);
+        },
+        onError: (err) => {
+          setErrorMessage(err);
+          setTimeout(() => setErrorMessage(null), 5000);
+        },
       },
-      onConnectionChange: (connected, peers) => {
-        setIsConnected(connected);
-        setPeerCounts(peers);
-      },
-      onError: (err) => {
-        setErrorMessage(err);
-        setTimeout(() => setErrorMessage(null), 5000);
-      },
-    });
+      currentTransport,
+      directGatewayIp
+    );
 
-    streamer.connectWebSocket();
+    streamer.connectTransport(currentTransport, directGatewayIp);
     streamerRef.current = streamer;
 
-    // Set initial analyser node
     const an = role === 'transmitter' ? streamer.getInputAnalyser() : streamer.getOutputAnalyser();
     setAnalyser(an);
 
     return () => {
       streamer.destroy();
     };
-  }, [sessionCode, activeTab]);
+  }, [sessionCode, activeTab, currentTransport, directGatewayIp]);
 
   // Transmit toggle handler
   const handleToggleStreaming = async () => {
@@ -223,9 +233,56 @@ export default function App() {
     }
   };
 
+  const handleResetStats = () => {
+    if (streamerRef.current) {
+      streamerRef.current.resetStats();
+      setTelemetry((prev) => ({
+        ...prev,
+        underruns: 0,
+        overruns: 0,
+        packetsSent: 0,
+        packetsReceived: 0,
+        packetLossPercent: 0,
+      }));
+    }
+  };
+
+  const handleSelectAudioSink = async (deviceId: string) => {
+    if (streamerRef.current) {
+      return await streamerRef.current.setAudioSink(deviceId);
+    }
+    return false;
+  };
+
+  // Optimized Hotspot Preset Application (Sprint 1 Feature)
+  const handleApplyHotspotPreset = (gatewayIp: string) => {
+    setDirectGatewayIp(gatewayIp);
+    setCurrentTransport('mobile_hotspot');
+
+    // Preset: 5ms buffer, Linear PCM 24-bit 48kHz studio master, 2.5ms chunk frames
+    const fastBuffer: BufferConfig = {
+      bufferSizeMs: 5,
+      adaptiveJitter: true,
+      packetLossConcealment: true,
+      dropLatePackets: true,
+      sampleRate: 48000,
+      channels: 2,
+      frameSizeMs: 2.5,
+    };
+    setBufferConfig(fastBuffer);
+    setActiveCodec('pcm24');
+    setFrameSizeMs(2.5);
+
+    if (streamerRef.current) {
+      streamerRef.current.updateBufferConfig(fastBuffer);
+      streamerRef.current.setCodec('pcm24');
+      streamerRef.current.connectTransport('mobile_hotspot', gatewayIp);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans">
-      {/* Top Bar Contract: Zone 1 (Single Wordmark) - Zone 2 (4-6 Clean Nav Links) - Zone 3 (1-2 Actions) */}
+      {/* Top Bar Contract: Zone 1 (Wordmark) - Zone 2 (4-6 Nav Links) - Zone 3 (1-2 Actions) */}
       <header className="sticky top-0 z-40 flex items-center justify-between px-6 py-3.5 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur-md">
         {/* Zone 1: Single Brand Text Element */}
         <a
@@ -277,14 +334,24 @@ export default function App() {
 
         {/* Zone 3: 1-2 Primary Actions */}
         <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-neutral-400 bg-neutral-900 px-2.5 py-1 rounded border border-neutral-800">
-            <span
-              className={`h-2 w-2 rounded-full ${
-                isConnected ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]' : 'bg-rose-500'
-              }`}
-            />
-            <span className="tabular-nums">PIN: {sessionCode}</span>
-          </div>
+          {currentTransport === 'mobile_hotspot' ? (
+            <button
+              onClick={() => setIsHotspotWizardOpen(true)}
+              className="hidden sm:flex items-center gap-1.5 text-xs font-mono text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded border border-amber-500/30 hover:bg-amber-500/20 transition-colors"
+            >
+              <Flame className="w-3.5 h-3.5 text-amber-400" />
+              <span>Hotspot: {directGatewayIp || '192.168.43.1'}</span>
+            </button>
+          ) : (
+            <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-neutral-400 bg-neutral-900 px-2.5 py-1 rounded border border-neutral-800">
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  isConnected ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]' : 'bg-rose-500'
+                }`}
+              />
+              <span className="tabular-nums">PIN: {sessionCode}</span>
+            </div>
+          )}
 
           <button
             onClick={() => setIsPairingModalOpen(true)}
@@ -372,11 +439,11 @@ export default function App() {
             sessionCode={sessionCode}
             onOpenPairing={() => setIsPairingModalOpen(true)}
             peerCounts={peerCounts}
-            onResetStats={() => {
-              if (streamerRef.current) {
-                // reset
-              }
-            }}
+            onResetStats={handleResetStats}
+            currentTransport={currentTransport}
+            onChangeTransport={setCurrentTransport}
+            onOpenHotspotWizard={() => setIsHotspotWizardOpen(true)}
+            onSelectAudioSink={handleSelectAudioSink}
           />
         )}
 
@@ -396,10 +463,13 @@ export default function App() {
             isMuted={isInputMuted}
             onToggleMute={handleToggleInputMute}
             isConnected={isConnected}
+            currentTransport={currentTransport}
+            onChangeTransport={setCurrentTransport}
+            onOpenHotspotWizard={() => setIsHotspotWizardOpen(true)}
           />
         )}
 
-        {/* Split Workbench View: Allows testing transmitter and receiver simultaneously on one PC! */}
+        {/* Split Workbench View */}
         {activeTab === 'workbench' && (
           <div className="space-y-6">
             <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -411,7 +481,7 @@ export default function App() {
                   </h2>
                 </div>
                 <p className="text-xs text-neutral-400 mt-0.5">
-                  Test microphone capture or test signals on the left, and observe the live receiver jitter buffer & visualizer on the right.
+                  Test microphone capture or test signals on the left, and observe live receiver jitter buffer &amp; visualizer on the right.
                 </p>
               </div>
 
@@ -457,6 +527,9 @@ export default function App() {
                   isMuted={isInputMuted}
                   onToggleMute={handleToggleInputMute}
                   isConnected={isConnected}
+                  currentTransport={currentTransport}
+                  onChangeTransport={setCurrentTransport}
+                  onOpenHotspotWizard={() => setIsHotspotWizardOpen(true)}
                 />
               </div>
 
@@ -482,7 +555,11 @@ export default function App() {
                   sessionCode={sessionCode}
                   onOpenPairing={() => setIsPairingModalOpen(true)}
                   peerCounts={peerCounts}
-                  onResetStats={() => {}}
+                  onResetStats={handleResetStats}
+                  currentTransport={currentTransport}
+                  onChangeTransport={setCurrentTransport}
+                  onOpenHotspotWizard={() => setIsHotspotWizardOpen(true)}
+                  onSelectAudioSink={handleSelectAudioSink}
                 />
               </div>
             </div>
@@ -492,7 +569,7 @@ export default function App() {
         {activeTab === 'drivers' && <DriverFrameworkHub />}
       </main>
 
-      {/* Device Pairing Modal with QR Code and LAN Discovery */}
+      {/* Device Pairing Modal */}
       <DevicePairingModal
         isOpen={isPairingModalOpen}
         onClose={() => setIsPairingModalOpen(false)}
@@ -502,16 +579,27 @@ export default function App() {
         telemetry={telemetry}
         isConnected={isConnected}
         peerCounts={peerCounts}
+        onApplyHotspotPreset={handleApplyHotspotPreset}
       />
 
-      {/* Footer conforming to anti-slop guidelines: quiet, clean */}
+      {/* Mobile Hotspot Dedicated Wizard */}
+      <HotspotWizardModal
+        isOpen={isHotspotWizardOpen}
+        onClose={() => setIsHotspotWizardOpen(false)}
+        sessionCode={sessionCode}
+        onApplyHotspotPreset={handleApplyHotspotPreset}
+      />
+
+      {/* Clean footer */}
       <footer className="border-t border-neutral-900 bg-neutral-950 px-6 py-4 text-xs text-neutral-500 flex flex-col sm:flex-row items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span>PulseCast Audio Streamer</span>
           <span>·</span>
           <span>Open-Source Driver Framework</span>
           <span>·</span>
-          <span>Low-Latency Wi-Fi Pipeline</span>
+          <span className="font-mono text-neutral-400">
+            {currentTransport === 'mobile_hotspot' ? 'Direct SoftAP (<5ms)' : 'Wi-Fi LAN'}
+          </span>
         </div>
         <div className="font-mono text-[11px] tabular-nums text-neutral-400">
           48000 Hz · WASAPI / PipeWire Compliant

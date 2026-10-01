@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { StreamTelemetry, AudioCodec, BufferConfig } from '../types/audio';
 import { AudioVisualizer } from './AudioVisualizer';
 import { JitterBufferControl } from './JitterBufferControl';
 import { CodecSelector } from './CodecSelector';
+import { TransportModeSelector } from './TransportModeSelector';
+import { TransportType } from '../services/transports/AudioTransport';
 import {
   Volume2,
   VolumeX,
@@ -15,6 +17,8 @@ import {
   QrCode,
   Shield,
   Layers,
+  Flame,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface PcReceiverViewProps {
@@ -38,6 +42,10 @@ interface PcReceiverViewProps {
   onOpenPairing: () => void;
   peerCounts: { rx: number; tx: number };
   onResetStats: () => void;
+  currentTransport: TransportType;
+  onChangeTransport: (type: TransportType) => void;
+  onOpenHotspotWizard: () => void;
+  onSelectAudioSink?: (sinkId: string) => Promise<boolean>;
 }
 
 export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
@@ -61,9 +69,56 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
   onOpenPairing,
   peerCounts,
   onResetStats,
+  currentTransport,
+  onChangeTransport,
+  onOpenHotspotWizard,
+  onSelectAudioSink,
 }) => {
+  const [outputDevices, setOutputDevices] = useState<{ deviceId: string; label: string }[]>([]);
+  const [selectedSink, setSelectedSink] = useState<string>('default');
+  const [sinkSuccess, setSinkSuccess] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.enumerateDevices) {
+      navigator.mediaDevices
+        .enumerateDevices()
+        .then((devices) => {
+          const audioOutputs = devices
+            .filter((d) => d.kind === 'audiooutput')
+            .map((d) => ({
+              deviceId: d.deviceId,
+              label: d.label || `Output (${d.deviceId.slice(0, 5)})`,
+            }));
+          if (audioOutputs.length > 0) {
+            setOutputDevices(audioOutputs);
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
+
+  const handleDeviceChange = async (deviceId: string) => {
+    setSelectedSink(deviceId);
+    if (onSelectAudioSink) {
+      const ok = await onSelectAudioSink(deviceId);
+      if (ok) {
+        setSinkSuccess(true);
+        setTimeout(() => setSinkSuccess(false), 2000);
+      }
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {/* Transport Mode Switcher (LAN Wi-Fi vs Mobile Hotspot) */}
+      <TransportModeSelector
+        currentTransport={currentTransport}
+        onChangeTransport={onChangeTransport}
+        onOpenHotspotWizard={onOpenHotspotWizard}
+        isHotspotActive={currentTransport === 'mobile_hotspot'}
+        gatewayIp={telemetry.gatewayIp}
+      />
+
       {/* Workstation Top Bar / Audio Output Strip */}
       <div className="rounded-lg border border-neutral-800 bg-neutral-900/90 p-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -78,11 +133,17 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
                 </h3>
                 <span className="text-xs text-neutral-500">·</span>
                 <span className="text-xs font-mono text-emerald-400">
-                  WASAPI / PipeWire Ready
+                  {currentTransport === 'mobile_hotspot' ? 'Hotspot Direct (<5ms)' : 'WASAPI / PipeWire Ready'}
                 </span>
               </div>
               <p className="text-xs text-neutral-400 mt-0.5">
-                Listening for incoming low-latency Wi-Fi stream on session PIN <strong className="font-mono text-neutral-200">{sessionCode}</strong>
+                Listening for incoming stream on session PIN{' '}
+                <strong className="font-mono text-neutral-200">{sessionCode}</strong>
+                {telemetry.gatewayIp && currentTransport === 'mobile_hotspot' && (
+                  <span className="text-amber-400 font-mono ml-1">
+                    (Gateway: {telemetry.gatewayIp})
+                  </span>
+                )}
               </p>
             </div>
           </div>
@@ -91,12 +152,16 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 bg-neutral-950 px-3 py-1.5 rounded-md border border-neutral-800 text-xs">
               <Layers className="w-3.5 h-3.5 text-neutral-400" />
-              <span className="text-neutral-400">Driver Target:</span>
+              <span className="text-neutral-400">Audio Sink:</span>
               <select
                 aria-label="Virtual Audio Device Routing"
-                className="bg-transparent text-neutral-200 font-medium focus:outline-none cursor-pointer"
-                defaultValue="vb-cable"
+                className="bg-transparent text-neutral-200 font-medium focus:outline-none cursor-pointer max-w-[200px] truncate"
+                value={selectedSink}
+                onChange={(e) => handleDeviceChange(e.target.value)}
               >
+                <option value="default" className="bg-neutral-900 text-neutral-200">
+                  Default System Audio Output
+                </option>
                 <option value="vb-cable" className="bg-neutral-900 text-neutral-200">
                   VB-Cable / Virtual Audio Sink
                 </option>
@@ -106,10 +171,13 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
                 <option value="wasapi-exclusive" className="bg-neutral-900 text-neutral-200">
                   WASAPI Exclusive 128 samples
                 </option>
-                <option value="speakers" className="bg-neutral-900 text-neutral-200">
-                  Direct PC Speakers & Headphones
-                </option>
+                {outputDevices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId} className="bg-neutral-900 text-neutral-200">
+                    {d.label}
+                  </option>
+                ))}
               </select>
+              {sinkSuccess && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
             </div>
 
             <button
@@ -160,7 +228,11 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
             <div className="flex items-center justify-between text-xs">
               <span className="text-neutral-400 font-medium">Stereo Pan Balance</span>
               <span className="font-mono font-semibold text-neutral-300 tabular-nums">
-                {pan === 0 ? 'C' : pan < 0 ? `L${Math.abs(Math.round(pan * 100))}` : `R${Math.round(pan * 100)}`}
+                {pan === 0
+                  ? 'C'
+                  : pan < 0
+                  ? `L${Math.abs(Math.round(pan * 100))}`
+                  : `R${Math.round(pan * 100)}`}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -181,7 +253,9 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
           {/* Local Loopback / Self Monitor Toggle */}
           <div className="flex items-center justify-between p-2.5 rounded border border-neutral-800 bg-neutral-950">
             <div>
-              <div className="text-xs font-semibold text-neutral-200">Local Speaker Pass-Through</div>
+              <div className="text-xs font-semibold text-neutral-200">
+                Local Speaker Pass-Through
+              </div>
               <div className="text-[11px] text-neutral-500">Play stream on host speakers</div>
             </div>
             <input
@@ -225,7 +299,7 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
           <div className="flex items-center gap-2">
             <Smartphone className="w-4 h-4 text-emerald-400" />
             <h3 className="text-sm font-semibold text-neutral-200">
-              Active Transmitters on Subnet
+              Active Transmitters on Link
             </h3>
             <span className="text-xs text-neutral-500">·</span>
             <span className="font-mono text-xs text-neutral-400 tabular-nums">
@@ -233,8 +307,9 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
             </span>
           </div>
 
-          <div className="text-xs text-neutral-400">
-            Transport: <strong className="font-mono text-neutral-200">WS-Binary / WebRTC Ready</strong>
+          <div className="text-xs text-neutral-400 font-mono">
+            Link: <strong className="text-emerald-400 uppercase">{currentTransport}</strong>
+            {currentTransport === 'mobile_hotspot' && ' (Direct 1-Hop)'}
           </div>
         </div>
 
@@ -253,7 +328,8 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   </div>
                   <div className="text-[11px] font-mono text-neutral-400 mt-0.5">
-                    Session PIN: {sessionCode} · Codec: {activeCodec.toUpperCase()} · Latency: {telemetry.audioLatencyMs.toFixed(1)} ms
+                    PIN: {sessionCode} · Codec: {activeCodec.toUpperCase()} · Audio Latency:{' '}
+                    {telemetry.audioLatencyMs.toFixed(1)} ms
                   </div>
                 </div>
               </div>
@@ -276,14 +352,23 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
                 No Mobile Transmitters Connected
               </div>
               <p className="text-xs text-neutral-500 max-w-sm mx-auto mt-1 mb-3">
-                Scan the QR code with your phone camera or open the Mobile Transmitter tab to begin low-latency streaming.
+                Scan the QR code with your phone camera or open the Mobile Transmitter tab to begin
+                low-latency streaming.
               </p>
-              <button
-                onClick={onOpenPairing}
-                className="px-3.5 py-1.5 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-500 rounded-md transition-colors"
-              >
-                Show Pairing QR Code
-              </button>
+              <div className="flex items-center justify-center gap-2">
+                <button
+                  onClick={onOpenPairing}
+                  className="px-3.5 py-1.5 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-500 rounded-md transition-colors"
+                >
+                  Show Pairing QR Code
+                </button>
+                <button
+                  onClick={onOpenHotspotWizard}
+                  className="px-3.5 py-1.5 text-xs font-medium text-neutral-950 bg-amber-400 hover:bg-amber-300 rounded-md transition-colors"
+                >
+                  Direct Hotspot Wizard
+                </button>
+              </div>
             </div>
           )}
         </div>

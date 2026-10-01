@@ -1,5 +1,6 @@
 import express from 'express';
 import http from 'http';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -230,6 +231,83 @@ app.get('/api/discovery', (_req, res) => {
       recommendedSampleRate: 48000,
       lowestJitterBufferMs: 5,
     },
+  });
+});
+
+// REST API for Network Interfaces & Mobile Hotspot Subnet Detection
+app.get('/api/network/interfaces', (_req, res) => {
+  const ifaces = os.networkInterfaces();
+  const detectedInterfaces: Array<{
+    name: string;
+    family: string;
+    address: string;
+    internal: boolean;
+    type: 'hotspot' | 'wifi' | 'ethernet' | 'loopback';
+    estimatedSubnet: string;
+    gatewayIp?: string;
+  }> = [];
+
+  for (const [name, addrs] of Object.entries(ifaces)) {
+    if (!addrs) continue;
+    for (const addr of addrs) {
+      if (addr.family === 'IPv4') {
+        let type: 'hotspot' | 'wifi' | 'ethernet' | 'loopback' = 'ethernet';
+        let gatewayIp: string | undefined;
+
+        if (addr.internal) {
+          type = 'loopback';
+        } else if (
+          addr.address.startsWith('192.168.43.') || // Android SoftAP
+          addr.address.startsWith('172.20.10.') ||  // iOS Personal Hotspot
+          addr.address.startsWith('192.168.137.') || // Windows Mobile Hotspot
+          name.toLowerCase().includes('ap') ||
+          name.toLowerCase().includes('hotspot')
+        ) {
+          type = 'hotspot';
+          if (addr.address.startsWith('192.168.43.')) gatewayIp = '192.168.43.1';
+          if (addr.address.startsWith('172.20.10.')) gatewayIp = '172.20.10.1';
+          if (addr.address.startsWith('192.168.137.')) gatewayIp = '192.168.137.1';
+        } else if (
+          name.toLowerCase().includes('wlan') ||
+          name.toLowerCase().includes('wi-fi') ||
+          name.toLowerCase().includes('wifi')
+        ) {
+          type = 'wifi';
+        }
+
+        detectedInterfaces.push({
+          name,
+          family: addr.family,
+          address: addr.address,
+          internal: addr.internal,
+          type,
+          estimatedSubnet: addr.address.substring(0, addr.address.lastIndexOf('.')) + '.0/24',
+          gatewayIp,
+        });
+      }
+    }
+  }
+
+  res.json({
+    interfaces: detectedInterfaces,
+    hotspotProfiles: [
+      {
+        os: 'Android Portable Hotspot',
+        typicalGateway: '192.168.43.1',
+        description: 'Android creates direct SoftAP with default gateway 192.168.43.1 (Subnet 192.168.43.0/24)',
+      },
+      {
+        os: 'iOS Personal Hotspot',
+        typicalGateway: '172.20.10.1',
+        description: 'iOS assigns 172.20.10.1 as direct gateway to connected PC clients',
+      },
+      {
+        os: 'Windows 10/11 Mobile Hotspot',
+        typicalGateway: '192.168.137.1',
+        description: 'HostedNetwork on Windows binds to virtual adapter 192.168.137.1',
+      },
+    ],
+    serverPort: PORT,
   });
 });
 

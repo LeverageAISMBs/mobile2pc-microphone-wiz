@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { StreamTelemetry, AudioCodec } from '../types/audio';
 import { AudioSourceType } from '../services/audioStreamer';
+import { TransportType } from '../services/transports/AudioTransport';
 import {
   Mic,
-  MicOff,
   Radio,
-  Wifi,
   Sliders,
   Volume2,
   VolumeX,
@@ -14,6 +13,8 @@ import {
   Music,
   Activity,
   Smartphone,
+  Flame,
+  Wifi,
 } from 'lucide-react';
 
 interface MobileTransmitterViewProps {
@@ -31,6 +32,9 @@ interface MobileTransmitterViewProps {
   isMuted: boolean;
   onToggleMute: () => void;
   isConnected: boolean;
+  currentTransport?: TransportType;
+  onChangeTransport?: (type: TransportType) => void;
+  onOpenHotspotWizard?: () => void;
 }
 
 export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
@@ -48,6 +52,9 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
   isMuted,
   onToggleMute,
   isConnected,
+  currentTransport = 'lan_wifi',
+  onChangeTransport,
+  onOpenHotspotWizard,
 }) => {
   const sources: { id: AudioSourceType; label: string; icon: React.ReactNode }[] = [
     { id: 'mic', label: 'Phone Mic', icon: <Mic className="w-4 h-4" /> },
@@ -71,19 +78,71 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
             </span>
           </div>
 
-          <button
-            onClick={onOpenPairing}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono text-emerald-400 bg-neutral-950 border border-neutral-800 rounded hover:border-emerald-500/50 transition-colors"
-          >
-            <QrCode className="w-3 h-3" />
-            <span>PIN: {sessionCode}</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            {currentTransport === 'mobile_hotspot' ? (
+              <button
+                onClick={onOpenHotspotWizard}
+                className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-mono text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded"
+              >
+                <Flame className="w-3 h-3 text-amber-400" />
+                <span>Hotspot</span>
+              </button>
+            ) : (
+              <button
+                onClick={onOpenHotspotWizard}
+                className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-mono text-neutral-400 bg-neutral-950 border border-neutral-800 rounded hover:text-amber-400"
+              >
+                <Wifi className="w-3 h-3" />
+                <span>Wi-Fi</span>
+              </button>
+            )}
+
+            <button
+              onClick={onOpenPairing}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono text-emerald-400 bg-neutral-950 border border-neutral-800 rounded hover:border-emerald-500/50 transition-colors"
+            >
+              <QrCode className="w-3 h-3" />
+              <span>PIN: {sessionCode}</span>
+            </button>
+          </div>
         </div>
+
+        {/* Transport Link Switcher on Mobile */}
+        {onChangeTransport && (
+          <div className="mt-3 grid grid-cols-2 gap-1.5 p-1 bg-neutral-950 rounded border border-neutral-800 text-xs">
+            <button
+              onClick={() => onChangeTransport('lan_wifi')}
+              className={`py-1 rounded font-medium transition-colors ${
+                currentTransport === 'lan_wifi'
+                  ? 'bg-neutral-800 text-emerald-400 shadow-sm'
+                  : 'text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              Standard LAN Wi-Fi
+            </button>
+            <button
+              onClick={() => {
+                onChangeTransport('mobile_hotspot');
+                if (onOpenHotspotWizard) onOpenHotspotWizard();
+              }}
+              className={`py-1 rounded font-medium transition-colors flex items-center justify-center gap-1 ${
+                currentTransport === 'mobile_hotspot'
+                  ? 'bg-amber-950/60 text-amber-400 border border-amber-500/40 shadow-sm'
+                  : 'text-neutral-400 hover:text-amber-300'
+              }`}
+            >
+              <Flame className="w-3 h-3 text-amber-400" />
+              <span>Mobile Hotspot</span>
+            </button>
+          </div>
+        )}
 
         {/* Connection Bar */}
         <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-neutral-800/80 text-center font-mono">
           <div className="p-2 rounded bg-neutral-950/60 border border-neutral-800">
-            <div className="text-[10px] text-neutral-500">Wi-Fi RTT</div>
+            <div className="text-[10px] text-neutral-500">
+              {currentTransport === 'mobile_hotspot' ? 'Direct Hop' : 'Wi-Fi RTT'}
+            </div>
             <div className="text-xs font-bold text-emerald-400 tabular-nums mt-0.5">
               {telemetry.rttMs.toFixed(1)} ms
             </div>
@@ -95,9 +154,9 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
             </div>
           </div>
           <div className="p-2 rounded bg-neutral-950/60 border border-neutral-800">
-            <div className="text-[10px] text-neutral-500">Loss Rate</div>
+            <div className="text-[10px] text-neutral-500">Signal RSSI</div>
             <div className="text-xs font-bold text-neutral-200 tabular-nums mt-0.5">
-              {telemetry.packetLossPercent.toFixed(1)}%
+              {telemetry.signalRssi} dBm
             </div>
           </div>
         </div>
@@ -132,7 +191,9 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
           </div>
           <p className="text-[11px] text-neutral-500 mt-0.5">
             {isStreaming
-              ? 'Low-latency packet stream active over local Wi-Fi'
+              ? currentTransport === 'mobile_hotspot'
+                ? 'Ultra-low latency stream active over Direct SoftAP'
+                : 'Low-latency packet stream active over local Wi-Fi'
               : 'Ensure PC receiver is paired before starting'}
           </p>
         </div>

@@ -1,3 +1,5 @@
+import { TransportType, TransportState } from '../services/transports/AudioTransport';
+
 export type AudioCodec = 'opus' | 'pcm16' | 'pcm24' | 'flac' | 'float32';
 
 export interface CodecInfo {
@@ -42,6 +44,16 @@ export interface StreamTelemetry {
   rmsDbfs: number;
   isClipping: boolean;
   networkQuality: 'excellent' | 'good' | 'fair' | 'poor';
+  transportType?: TransportType;
+  transportState?: TransportState;
+  directHopLatencyMs?: number;
+  gatewayIp?: string;
+}
+
+export interface HotspotProfile {
+  os: string;
+  typicalGateway: string;
+  description: string;
 }
 
 export interface PairedDevice {
