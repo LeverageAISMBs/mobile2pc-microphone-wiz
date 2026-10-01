@@ -176,6 +176,18 @@ wss.on('connection', (ws: WebSocket, req) => {
               peer.ws.send(broadcastMsg);
             }
           });
+        } else if (msg.type === 'WEBRTC_SIGNAL' || msg.type === 'SIGNAL_OFFER' || msg.type === 'SIGNAL_ANSWER' || msg.type === 'SIGNAL_ICE') {
+          // WebRTC P2P Direct Signaling Relay (Sprint 5)
+          const signalMsg = JSON.stringify({
+            ...msg,
+            senderRole: role,
+          });
+          const targetPeers = role === 'transmitter' ? session.receivers : session.transmitters;
+          targetPeers.forEach((peer) => {
+            if (peer.ws.readyState === WebSocket.OPEN) {
+              peer.ws.send(signalMsg);
+            }
+          });
         } else if (msg.type === 'HEARTBEAT') {
           ws.send(JSON.stringify({ type: 'HEARTBEAT_ACK', timestamp: Date.now() }));
         }

@@ -1,6 +1,18 @@
-export type TransportType = 'lan_wifi' | 'mobile_hotspot' | 'bluetooth_ble' | 'bluetooth_a2dp';
+export type TransportType = 'lan_wifi' | 'mobile_hotspot' | 'bluetooth_ble' | 'bluetooth_a2dp' | 'webrtc_p2p';
 
 export type TransportState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
+
+export interface WebRtcTelemetry {
+  candidateType: 'host' | 'srflx' | 'prflx' | 'relay';
+  localCandidate: string;
+  remoteCandidate: string;
+  packetsLost: number;
+  packetsSent: number;
+  packetsReceived: number;
+  rttMs: number;
+  availableOutgoingBitrateKbps: number;
+  dataChannelState: string;
+}
 
 export interface BleSlicerTelemetry {
   mtuSize: number;
@@ -35,6 +47,7 @@ export interface TransportTelemetry {
   bytesSent: number;
   bytesReceived: number;
   ble?: BleSlicerTelemetry;
+  webrtc?: WebRtcTelemetry;
 }
 
 export interface HotspotNetworkInfo {

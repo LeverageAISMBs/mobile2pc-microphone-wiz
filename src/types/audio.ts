@@ -1,4 +1,4 @@
-import { TransportType, TransportState, BleSlicerTelemetry } from '../services/transports/AudioTransport';
+import { TransportType, TransportState, BleSlicerTelemetry, WebRtcTelemetry } from '../services/transports/AudioTransport';
 
 export type AudioCodec = 'opus' | 'pcm16' | 'pcm24' | 'flac' | 'float32';
 
@@ -51,6 +51,7 @@ export interface StreamTelemetry {
   ble?: BleSlicerTelemetry;
   audioEngineMode?: 'worklet_thread' | 'script_processor_fallback';
   activeAudioSinkDevice?: string;
+  webrtc?: WebRtcTelemetry;
 }
 
 export interface HotspotProfile {

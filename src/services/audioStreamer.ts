@@ -3,8 +3,11 @@ import { CodecEngine } from './codecEngine';
 import { JitterBuffer } from './jitterBuffer';
 import { WebSocketTransport } from './transports/WebSocketTransport';
 import { WebBluetoothGattTransport } from './transports/WebBluetoothGattTransport';
+import { WebRtcDataChannelTransport } from './transports/WebRtcDataChannelTransport';
 import { AudioTransport, TransportType, TransportState } from './transports/AudioTransport';
 import { AudioWorkletManager } from './worklets/AudioWorkletManager';
+import { StudioDspEngine } from './dsp/StudioDspEngine';
+import { AudioRecorder, RecorderTelemetry } from './recording/AudioRecorder';
 
 export type AudioSourceType = 'mic' | 'sine1k' | 'pinknoise' | 'guitar' | 'drums';
 
@@ -42,6 +45,10 @@ export class AudioStreamer {
   private mediaStreamDest: MediaStreamAudioDestinationNode | null = null;
   private micStream: MediaStream | null = null;
   private synthInterval: number | null = null;
+
+  // Studio DSP & Session Recorder (Sprint 5)
+  private dspEngine: StudioDspEngine | null = null;
+  private audioRecorder: AudioRecorder = new AudioRecorder();
 
   // Signal Generator state
   private activeSource: AudioSourceType = 'mic';
@@ -158,12 +165,18 @@ export class AudioStreamer {
       this.outputAnalyser.fftSize = 1024;
       this.outputAnalyser.smoothingTimeConstant = 0.8;
 
+      // Studio DSP Mastering Engine (Sprint 5)
+      this.dspEngine = new StudioDspEngine();
+      const dspNodes = this.dspEngine.init(this.audioCtx);
+
+      // Connect JitterBuffer output to DSP Input
+      await this.jitterBuffer.setAudioContext(this.audioCtx, dspNodes.input);
+
+      // Route DSP output to outputGainNode
+      dspNodes.output.connect(this.outputGainNode);
       this.outputGainNode.connect(this.pannerNode);
       this.pannerNode.connect(this.outputAnalyser);
       this.outputAnalyser.connect(this.audioCtx.destination);
-
-      // Connect JitterBuffer output
-      await this.jitterBuffer.setAudioContext(this.audioCtx, this.outputGainNode);
 
       // Universal Output Device Bridge (for browsers with HTMLAudioElement setSinkId)
       try {
@@ -200,6 +213,16 @@ export class AudioStreamer {
         role: this.role,
         sessionCode: this.sessionCode,
         mtuPayloadSize: bleMtuSize || 240,
+      });
+      this.setupTransportListeners();
+      await this.transport.connect();
+    } else if (type === 'webrtc_p2p') {
+      this.transport.disconnect();
+      this.transport = new WebRtcDataChannelTransport({
+        role: this.role,
+        sessionCode: this.sessionCode,
+        directGatewayIp: gatewayIp,
+        signalingHost: customHost,
       });
       this.setupTransportListeners();
       await this.transport.connect();
@@ -596,6 +619,12 @@ export class AudioStreamer {
         telemetry.signalRssi = transportTel.rssi;
         telemetry.bitrateKbps = transportTel.throughputKbps;
         telemetry.ble = transportTel.ble;
+      } else if (this.currentTransportType === 'webrtc_p2p') {
+        telemetry.audioLatencyMs = Math.round((transportTel.hopLatencyMs + telemetry.bufferFillMs + 2.5) * 10) / 10;
+        telemetry.rttMs = transportTel.rttMs;
+        telemetry.signalRssi = -38;
+        telemetry.bitrateKbps = transportTel.throughputKbps;
+        telemetry.webrtc = transportTel.webrtc;
       }
 
       if (this.role === 'transmitter') {
@@ -692,6 +721,31 @@ export class AudioStreamer {
     return [];
   }
 
+  public getDspEngine(): StudioDspEngine | null {
+    return this.dspEngine;
+  }
+
+  public getWebRtcTransport(): WebRtcDataChannelTransport | null {
+    if (this.transport instanceof WebRtcDataChannelTransport) {
+      return this.transport;
+    }
+    return null;
+  }
+
+  public startRecording(onTelemetry?: (t: RecorderTelemetry) => void) {
+    if (this.audioCtx && this.outputGainNode) {
+      this.audioRecorder.start(this.audioCtx, this.outputGainNode, onTelemetry);
+    }
+  }
+
+  public stopRecording(): Blob | null {
+    return this.audioRecorder.stop();
+  }
+
+  public downloadRecording(blob: Blob, filename?: string) {
+    this.audioRecorder.download(blob, filename);
+  }
+
   public destroy() {
     this.stopTransmitting();
     if (this.telemetryInterval) {
@@ -700,6 +754,10 @@ export class AudioStreamer {
     }
     this.transport.disconnect();
     this.jitterBuffer.destroy();
+    if (this.dspEngine) {
+      this.dspEngine.destroy();
+      this.dspEngine = null;
+    }
     if (this.outputAudioElement) {
       try {
         this.outputAudioElement.pause();

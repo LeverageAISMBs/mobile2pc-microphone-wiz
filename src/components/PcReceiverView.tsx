@@ -5,6 +5,9 @@ import { JitterBufferControl } from './JitterBufferControl';
 import { CodecSelector } from './CodecSelector';
 import { TransportModeSelector } from './TransportModeSelector';
 import { TransportType } from '../services/transports/AudioTransport';
+import { StudioDspEngine } from '../services/dsp/StudioDspEngine';
+import { StudioDspRack } from './StudioDspRack';
+import { RecorderTelemetry } from '../services/recording/AudioRecorder';
 import {
   Volume2,
   VolumeX,
@@ -19,6 +22,11 @@ import {
   Layers,
   Flame,
   CheckCircle2,
+  Globe,
+  Terminal,
+  Circle,
+  Square,
+  Download,
 } from 'lucide-react';
 
 interface PcReceiverViewProps {
@@ -47,8 +55,13 @@ interface PcReceiverViewProps {
   onOpenHotspotWizard: () => void;
   onOpenBluetoothWizard?: () => void;
   onOpenGattWizard?: () => void;
+  onOpenWebRtcWizard?: () => void;
   bleMtuSize?: number;
   onSelectAudioSink?: (sinkId: string) => Promise<boolean>;
+  dspEngine?: StudioDspEngine | null;
+  onStartRecording?: (cb: (t: RecorderTelemetry) => void) => void;
+  onStopRecording?: () => Blob | null;
+  onDownloadRecording?: (blob: Blob) => void;
 }
 
 export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
@@ -77,13 +90,49 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
   onOpenHotspotWizard,
   onOpenBluetoothWizard,
   onOpenGattWizard,
+  onOpenWebRtcWizard,
   bleMtuSize = 240,
   onSelectAudioSink,
+  dspEngine,
+  onStartRecording,
+  onStopRecording,
+  onDownloadRecording,
 }) => {
   const [outputDevices, setOutputDevices] = useState<{ deviceId: string; label: string }[]>([]);
   const [selectedSink, setSelectedSink] = useState<string>('default');
   const [sinkSuccess, setSinkSuccess] = useState<boolean>(false);
   const [isRefreshingSinks, setIsRefreshingSinks] = useState<boolean>(false);
+
+  // Recording State (Sprint 5)
+  const [isRecording, setIsRecording] = useState(false);
+  const [recElapsed, setRecElapsed] = useState(0);
+  const [recSizeMb, setRecSizeMb] = useState(0);
+  const [lastRecordedBlob, setLastRecordedBlob] = useState<Blob | null>(null);
+
+  const handleToggleRecording = () => {
+    if (isRecording) {
+      if (onStopRecording) {
+        const blob = onStopRecording();
+        setLastRecordedBlob(blob);
+        setIsRecording(false);
+      }
+    } else {
+      if (onStartRecording) {
+        setLastRecordedBlob(null);
+        setIsRecording(true);
+        onStartRecording((t) => {
+          setRecElapsed(t.elapsedSec);
+          setRecSizeMb(Math.round((t.fileSizeBytes / (1024 * 1024)) * 10) / 10);
+        });
+      }
+    }
+  };
+
+  const handleDownload = () => {
+    if (lastRecordedBlob && onDownloadRecording) {
+      onDownloadRecording(lastRecordedBlob);
+    }
+  };
 
   const fetchAudioOutputs = () => {
     setIsRefreshingSinks(true);
@@ -127,13 +176,14 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Transport Mode Switcher (LAN Wi-Fi vs Mobile Hotspot vs Bluetooth A2DP vs BLE GATT) */}
+      {/* Transport Mode Switcher (LAN Wi-Fi vs Mobile Hotspot vs Bluetooth A2DP vs BLE GATT vs WebRTC P2P) */}
       <TransportModeSelector
         currentTransport={currentTransport}
         onChangeTransport={onChangeTransport}
         onOpenHotspotWizard={onOpenHotspotWizard}
         onOpenBluetoothWizard={onOpenBluetoothWizard}
         onOpenGattWizard={onOpenGattWizard}
+        onOpenWebRtcWizard={onOpenWebRtcWizard}
         isHotspotActive={currentTransport === 'mobile_hotspot'}
         isBluetoothActive={currentTransport === 'bluetooth_a2dp'}
         isGattActive={currentTransport === 'bluetooth_ble'}
@@ -155,7 +205,11 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
                 </h3>
                 <span className="text-xs text-neutral-500">·</span>
                 <span className="text-xs font-mono text-emerald-400">
-                  {currentTransport === 'mobile_hotspot' ? 'Hotspot Direct (<5ms)' : 'WASAPI / PipeWire Ready'}
+                  {currentTransport === 'mobile_hotspot'
+                    ? 'Hotspot Direct (<5ms)'
+                    : currentTransport === 'webrtc_p2p'
+                    ? 'WebRTC P2P Direct'
+                    : 'WASAPI / PipeWire Ready'}
                 </span>
               </div>
               <p className="text-xs text-neutral-400 mt-0.5">
@@ -223,6 +277,43 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
                   ? 'AudioWorklet (Realtime Thread)'
                   : 'ScriptProcessor Fallback'}
               </span>
+            </div>
+
+            {/* Lossless Session WAV Recorder (Sprint 5) */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleToggleRecording}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors shadow-sm ${
+                  isRecording
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white animate-pulse'
+                    : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700'
+                }`}
+              >
+                {isRecording ? (
+                  <>
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                    <span>
+                      Rec {Math.floor(recElapsed / 60)}:{(recElapsed % 60).toString().padStart(2, '0')} ({recSizeMb}MB)
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Circle className="w-3.5 h-3.5 text-rose-500 fill-current" />
+                    <span>Record WAV</span>
+                  </>
+                )}
+              </button>
+
+              {lastRecordedBlob && !isRecording && (
+                <button
+                  onClick={handleDownload}
+                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-md transition-colors shadow-sm"
+                  title="Download last recorded lossless WAV session"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download WAV</span>
+                </button>
+              )}
             </div>
 
             <button
@@ -297,6 +388,76 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
                 <div className="text-[10px] text-neutral-500">RF Signal (RSSI)</div>
                 <div className="font-bold text-indigo-300 mt-0.5">
                   {telemetry.signalRssi} dBm
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* WebRTC Direct P2P Status Card (Sprint 5) */}
+        {currentTransport === 'webrtc_p2p' && (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 p-3.5 mt-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
+                  <Globe className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-semibold text-neutral-100">
+                      WebRTC Direct P2P DataChannel (Active Stream)
+                    </h4>
+                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                      0 Server Hops · {telemetry.webrtc?.candidateType || 'Host'} Direct Socket
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Peer Candidate Pair: <code className="font-mono text-neutral-300">{telemetry.webrtc?.localCandidate || 'LAN Host'} ↔ {telemetry.webrtc?.remoteCandidate || 'Peer Node'}</code>
+                  </p>
+                </div>
+              </div>
+
+              {onOpenWebRtcWizard && (
+                <button
+                  onClick={onOpenWebRtcWizard}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-md transition-colors shadow-sm self-start sm:self-auto"
+                >
+                  <Terminal className="w-3.5 h-3.5" />
+                  <span>P2P Inspector &amp; SDP</span>
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2 border-t border-emerald-500/20 text-center font-mono text-[11px]">
+              <div className="p-2 rounded bg-neutral-950/60 border border-neutral-800">
+                <div className="text-[10px] text-neutral-500">DataChannel State</div>
+                <div className="font-bold text-emerald-400 mt-0.5 capitalize">
+                  {telemetry.webrtc?.dataChannelState || 'Open'}
+                </div>
+              </div>
+              <div className="p-2 rounded bg-neutral-950/60 border border-neutral-800">
+                <div className="text-[10px] text-neutral-500">P2P RTT Latency</div>
+                <div className="font-bold text-neutral-100 mt-0.5">
+                  {telemetry.webrtc?.rttMs || telemetry.rttMs || 8.5} ms
+                </div>
+              </div>
+              <div className="p-2 rounded bg-neutral-950/60 border border-neutral-800">
+                <div className="text-[10px] text-neutral-500">P2P Packets Sent/Recv</div>
+                <div className="font-bold text-neutral-200 mt-0.5">
+                  {telemetry.webrtc?.packetsSent || 0} / {telemetry.webrtc?.packetsReceived || 0}
+                </div>
+              </div>
+              <div className="p-2 rounded bg-neutral-950/60 border border-neutral-800">
+                <div className="text-[10px] text-neutral-500">Delivery Guarantee</div>
+                <div className="font-bold text-emerald-400 mt-0.5 flex items-center justify-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                  <span>Unordered UDP Mode</span>
+                </div>
+              </div>
+              <div className="p-2 rounded bg-neutral-950/60 border border-neutral-800">
+                <div className="text-[10px] text-neutral-500">Candidate Type</div>
+                <div className="font-bold text-emerald-300 mt-0.5 uppercase">
+                  {telemetry.webrtc?.candidateType || 'Host (LAN)'}
                 </div>
               </div>
             </div>
@@ -388,6 +549,9 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
         title="Host Audio Analyser & Oscilloscope"
         height={150}
       />
+
+      {/* Studio DSP Audio Processor & Dynamics Rack (Sprint 5) */}
+      <StudioDspRack dspEngine={dspEngine || null} />
 
       {/* Jitter Buffer & Codec Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">

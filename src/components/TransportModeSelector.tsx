@@ -1,6 +1,6 @@
 import React from 'react';
 import { TransportType } from '../services/transports/AudioTransport';
-import { Wifi, Flame, Bluetooth, Radio, Zap } from 'lucide-react';
+import { Wifi, Flame, Bluetooth, Radio, Zap, Globe } from 'lucide-react';
 
 interface TransportModeSelectorProps {
   currentTransport: TransportType;
@@ -8,6 +8,7 @@ interface TransportModeSelectorProps {
   onOpenHotspotWizard?: () => void;
   onOpenBluetoothWizard?: () => void;
   onOpenGattWizard?: () => void;
+  onOpenWebRtcWizard?: () => void;
   isHotspotActive?: boolean;
   isBluetoothActive?: boolean;
   isGattActive?: boolean;
@@ -21,6 +22,7 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
   onOpenHotspotWizard,
   onOpenBluetoothWizard,
   onOpenGattWizard,
+  onOpenWebRtcWizard,
   isHotspotActive = false,
   isBluetoothActive = false,
   isGattActive = false,
@@ -49,6 +51,23 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
                 className="text-xs text-neutral-400 hover:text-neutral-200 underline underline-offset-2 transition-colors"
               >
                 Hotspot Guide
+              </button>
+            )}
+          </div>
+        )}
+
+        {currentTransport === 'webrtc_p2p' && (
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+              <Globe className="w-3 h-3 text-emerald-400 animate-pulse" />
+              <span>Direct WebRTC P2P DataChannel (0 Server Hops)</span>
+            </span>
+            {onOpenWebRtcWizard && (
+              <button
+                onClick={onOpenWebRtcWizard}
+                className="text-xs text-neutral-400 hover:text-neutral-200 underline underline-offset-2 transition-colors"
+              >
+                P2P Inspector
               </button>
             )}
           </div>
@@ -90,7 +109,7 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
       </div>
 
       {/* Mode Buttons */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
         {/* 1. LAN Wi-Fi */}
         <button
           onClick={() => onChangeTransport('lan_wifi')}
@@ -106,10 +125,10 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
                 currentTransport === 'lan_wifi' ? 'text-emerald-400' : 'text-neutral-400'
               }`}
             />
-            <span className="text-xs font-semibold">Local Wi-Fi (LAN)</span>
+            <span className="text-xs font-semibold">Local Wi-Fi</span>
           </div>
           <p className="text-[11px] text-neutral-500 mt-1 leading-tight">
-            Standard router subnet discovery & streaming
+            Standard router subnet discovery &amp; streaming
           </p>
         </button>
 
@@ -134,7 +153,7 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
                   currentTransport === 'mobile_hotspot' ? 'text-amber-400' : 'text-neutral-400'
                 }`}
               />
-              <span className="text-xs font-semibold">Mobile Hotspot</span>
+              <span className="text-xs font-semibold">Hotspot</span>
             </div>
             <span className="text-[10px] font-mono text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded">
               &lt;5ms
@@ -145,7 +164,39 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
           </p>
         </button>
 
-        {/* 3. Native Bluetooth A2DP Sink */}
+        {/* 3. Direct WebRTC P2P DataChannel */}
+        <button
+          onClick={() => {
+            onChangeTransport('webrtc_p2p');
+            if (onOpenWebRtcWizard) {
+              onOpenWebRtcWizard();
+            }
+          }}
+          className={`p-2.5 rounded-lg border text-left transition-all relative ${
+            currentTransport === 'webrtc_p2p'
+              ? 'border-emerald-500 bg-emerald-950/25 text-neutral-100 shadow-sm'
+              : 'border-neutral-800 bg-neutral-950/60 text-neutral-400 hover:border-neutral-700 hover:text-neutral-200'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Globe
+                className={`w-4 h-4 ${
+                  currentTransport === 'webrtc_p2p' ? 'text-emerald-400' : 'text-neutral-400'
+                }`}
+              />
+              <span className="text-xs font-semibold">WebRTC P2P</span>
+            </div>
+            <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded">
+              UDP
+            </span>
+          </div>
+          <p className="text-[11px] text-neutral-400 mt-1 leading-tight">
+            Direct host-to-host DataChannel; 0 server hops
+          </p>
+        </button>
+
+        {/* 4. Native Bluetooth A2DP Sink */}
         <button
           onClick={() => {
             onChangeTransport('bluetooth_a2dp');
@@ -166,10 +217,10 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
                   currentTransport === 'bluetooth_a2dp' ? 'text-cyan-400' : 'text-neutral-400'
                 }`}
               />
-              <span className="text-xs font-semibold">Bluetooth A2DP</span>
+              <span className="text-xs font-semibold">A2DP Sink</span>
             </div>
             <span className="text-[10px] font-mono text-cyan-400 font-bold bg-cyan-500/10 px-1.5 py-0.5 rounded">
-              A2DP Sink
+              A2DP
             </span>
           </div>
           <p className="text-[11px] text-neutral-400 mt-1 leading-tight">
@@ -177,7 +228,7 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
           </p>
         </button>
 
-        {/* 4. Bluetooth LE (GATT) - SPRINT 3 ACTIVE! */}
+        {/* 5. Bluetooth LE (GATT) */}
         <button
           onClick={() => {
             onChangeTransport('bluetooth_ble');
@@ -198,7 +249,7 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
                   currentTransport === 'bluetooth_ble' ? 'text-indigo-400' : 'text-neutral-400'
                 }`}
               />
-              <span className="text-xs font-semibold">Bluetooth LE</span>
+              <span className="text-xs font-semibold">BLE GATT</span>
             </div>
             <span className="text-[10px] font-mono text-indigo-400 font-bold bg-indigo-500/10 px-1.5 py-0.5 rounded">
               GATT
