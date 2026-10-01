@@ -1,4 +1,4 @@
-import { TransportType, TransportState } from '../services/transports/AudioTransport';
+import { TransportType, TransportState, BleSlicerTelemetry } from '../services/transports/AudioTransport';
 
 export type AudioCodec = 'opus' | 'pcm16' | 'pcm24' | 'flac' | 'float32';
 
@@ -48,6 +48,7 @@ export interface StreamTelemetry {
   transportState?: TransportState;
   directHopLatencyMs?: number;
   gatewayIp?: string;
+  ble?: BleSlicerTelemetry;
 }
 
 export interface HotspotProfile {

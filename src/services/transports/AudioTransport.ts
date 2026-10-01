@@ -2,6 +2,29 @@ export type TransportType = 'lan_wifi' | 'mobile_hotspot' | 'bluetooth_ble' | 'b
 
 export type TransportState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
 
+export interface BleSlicerTelemetry {
+  mtuSize: number;
+  slicesSent: number;
+  slicesReceived: number;
+  slicesDropped: number;
+  reassembledFrames: number;
+  avgSlicesPerFrame: number;
+  checksumErrors: number;
+  connectionIntervalMs: number;
+  phyMode: '1M' | '2M' | 'Coded';
+  flowBackpressureQueue: number;
+  isHardwareDevice: boolean;
+  deviceName?: string;
+}
+
+export interface MtuBenchmarkResult {
+  payloadSize: number;
+  rttMs: number;
+  throughputKbps: number;
+  packetLossPercent: number;
+  isRecommended: boolean;
+}
+
 export interface TransportTelemetry {
   rttMs: number;
   throughputKbps: number;
@@ -11,6 +34,7 @@ export interface TransportTelemetry {
   directPeerIp?: string;
   bytesSent: number;
   bytesReceived: number;
+  ble?: BleSlicerTelemetry;
 }
 
 export interface HotspotNetworkInfo {

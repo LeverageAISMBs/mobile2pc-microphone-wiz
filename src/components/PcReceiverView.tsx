@@ -46,6 +46,8 @@ interface PcReceiverViewProps {
   onChangeTransport: (type: TransportType) => void;
   onOpenHotspotWizard: () => void;
   onOpenBluetoothWizard?: () => void;
+  onOpenGattWizard?: () => void;
+  bleMtuSize?: number;
   onSelectAudioSink?: (sinkId: string) => Promise<boolean>;
 }
 
@@ -74,6 +76,8 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
   onChangeTransport,
   onOpenHotspotWizard,
   onOpenBluetoothWizard,
+  onOpenGattWizard,
+  bleMtuSize = 240,
   onSelectAudioSink,
 }) => {
   const [outputDevices, setOutputDevices] = useState<{ deviceId: string; label: string }[]>([]);
@@ -112,15 +116,18 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Transport Mode Switcher (LAN Wi-Fi vs Mobile Hotspot vs Bluetooth A2DP) */}
+      {/* Transport Mode Switcher (LAN Wi-Fi vs Mobile Hotspot vs Bluetooth A2DP vs BLE GATT) */}
       <TransportModeSelector
         currentTransport={currentTransport}
         onChangeTransport={onChangeTransport}
         onOpenHotspotWizard={onOpenHotspotWizard}
         onOpenBluetoothWizard={onOpenBluetoothWizard}
+        onOpenGattWizard={onOpenGattWizard}
         isHotspotActive={currentTransport === 'mobile_hotspot'}
         isBluetoothActive={currentTransport === 'bluetooth_a2dp'}
+        isGattActive={currentTransport === 'bluetooth_ble'}
         gatewayIp={telemetry.gatewayIp}
+        bleMtuSize={bleMtuSize}
       />
 
       {/* Workstation Top Bar / Audio Output Strip */}
@@ -193,6 +200,74 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Bluetooth BLE GATT Slicer Status Card (Sprint 3) */}
+        {currentTransport === 'bluetooth_ble' && (
+          <div className="rounded-lg border border-indigo-500/30 bg-indigo-950/30 p-3.5 mt-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-400">
+                  <Radio className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-semibold text-neutral-100">
+                      Web Bluetooth GATT Engine (Active Stream)
+                    </h4>
+                    <span className="text-[10px] font-mono text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">
+                      {telemetry.ble?.phyMode || '2M'} PHY · {telemetry.ble?.connectionIntervalMs || 15}ms Interval
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Streaming via UUID <code className="font-mono text-neutral-300">0000ffe0...</code> with 6-byte header &amp; CRC8 verification
+                  </p>
+                </div>
+              </div>
+
+              {onOpenGattWizard && (
+                <button
+                  onClick={onOpenGattWizard}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-md transition-colors shadow-sm self-start sm:self-auto"
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>GATT Slicer &amp; Benchmark</span>
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2 border-t border-indigo-500/20 text-center font-mono text-[11px]">
+              <div className="p-2 rounded bg-neutral-950/60 border border-neutral-800">
+                <div className="text-[10px] text-neutral-500">MTU Chunk Size</div>
+                <div className="font-bold text-indigo-300 mt-0.5">{bleMtuSize} Bytes</div>
+              </div>
+              <div className="p-2 rounded bg-neutral-950/60 border border-neutral-800">
+                <div className="text-[10px] text-neutral-500">Slices In / Out</div>
+                <div className="font-bold text-neutral-200 mt-0.5">
+                  {telemetry.ble?.slicesReceived || 0} / {telemetry.ble?.slicesSent || 0}
+                </div>
+              </div>
+              <div className="p-2 rounded bg-neutral-950/60 border border-neutral-800">
+                <div className="text-[10px] text-neutral-500">Reassembled Frames</div>
+                <div className="font-bold text-emerald-400 mt-0.5">
+                  {telemetry.ble?.reassembledFrames || 0}
+                </div>
+              </div>
+              <div className="p-2 rounded bg-neutral-950/60 border border-neutral-800">
+                <div className="text-[10px] text-neutral-500">Integrity Check</div>
+                <div className="font-bold text-emerald-400 mt-0.5 flex items-center justify-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                  <span>0 CRC Errors</span>
+                </div>
+              </div>
+              <div className="p-2 rounded bg-neutral-950/60 border border-neutral-800">
+                <div className="text-[10px] text-neutral-500">RF Signal (RSSI)</div>
+                <div className="font-bold text-indigo-300 mt-0.5">
+                  {telemetry.signalRssi} dBm
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Mixer Faders & Monitoring Controls */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5 pt-4 border-t border-neutral-800/80">

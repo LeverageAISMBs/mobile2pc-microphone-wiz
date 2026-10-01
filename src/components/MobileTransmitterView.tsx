@@ -36,6 +36,8 @@ interface MobileTransmitterViewProps {
   onChangeTransport?: (type: TransportType) => void;
   onOpenHotspotWizard?: () => void;
   onOpenBluetoothWizard?: () => void;
+  onOpenGattWizard?: () => void;
+  bleMtuSize?: number;
 }
 
 export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
@@ -57,6 +59,8 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
   onChangeTransport,
   onOpenHotspotWizard,
   onOpenBluetoothWizard,
+  onOpenGattWizard,
+  bleMtuSize = 240,
 }) => {
   const sources: { id: AudioSourceType; label: string; icon: React.ReactNode }[] = [
     { id: 'mic', label: 'Phone Mic', icon: <Mic className="w-4 h-4" /> },
@@ -94,7 +98,14 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
                 onClick={onOpenBluetoothWizard}
                 className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-mono text-cyan-400 bg-cyan-500/10 border border-cyan-500/30 rounded"
               >
-                <span>Bluetooth</span>
+                <span>A2DP</span>
+              </button>
+            ) : currentTransport === 'bluetooth_ble' ? (
+              <button
+                onClick={onOpenGattWizard}
+                className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-mono text-indigo-400 bg-indigo-500/10 border border-indigo-500/30 rounded"
+              >
+                <span>BLE GATT</span>
               </button>
             ) : (
               <button
@@ -118,7 +129,7 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
 
         {/* Transport Link Switcher on Mobile */}
         {onChangeTransport && (
-          <div className="mt-3 grid grid-cols-3 gap-1 p-1 bg-neutral-950 rounded border border-neutral-800 text-xs">
+          <div className="mt-3 grid grid-cols-4 gap-1 p-1 bg-neutral-950 rounded border border-neutral-800 text-xs">
             <button
               onClick={() => onChangeTransport('lan_wifi')}
               className={`py-1 rounded font-medium transition-colors truncate ${
@@ -154,7 +165,20 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
                   : 'text-neutral-400 hover:text-cyan-300'
               }`}
             >
-              <span>Bluetooth</span>
+              <span>A2DP</span>
+            </button>
+            <button
+              onClick={() => {
+                onChangeTransport('bluetooth_ble');
+                if (onOpenGattWizard) onOpenGattWizard();
+              }}
+              className={`py-1 rounded font-medium transition-colors flex items-center justify-center gap-1 truncate ${
+                currentTransport === 'bluetooth_ble'
+                  ? 'bg-indigo-950/60 text-indigo-400 border border-indigo-500/40 shadow-sm'
+                  : 'text-neutral-400 hover:text-indigo-300'
+              }`}
+            >
+              <span>BLE</span>
             </button>
           </div>
         )}
@@ -182,6 +206,29 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
             </div>
           </div>
         </div>
+
+        {/* BLE Slicer Status Bar (Sprint 3) */}
+        {currentTransport === 'bluetooth_ble' && (
+          <div className="mt-3 p-2.5 rounded-lg border border-indigo-500/30 bg-indigo-950/30 flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2">
+              <Radio className="w-3.5 h-3.5 text-indigo-400" />
+              <div>
+                <span className="font-semibold text-neutral-200">BLE GATT Slicer:</span>{' '}
+                <span className="font-mono text-indigo-300">
+                  {bleMtuSize}B MTU · {telemetry.ble?.slicesSent || 0} Slices Out
+                </span>
+              </div>
+            </div>
+            {onOpenGattWizard && (
+              <button
+                onClick={onOpenGattWizard}
+                className="text-[11px] font-medium text-indigo-400 hover:text-indigo-300 underline underline-offset-2 transition-colors"
+              >
+                Configure
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Main Broadcast Activation Hero */}

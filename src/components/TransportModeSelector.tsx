@@ -7,9 +7,12 @@ interface TransportModeSelectorProps {
   onChangeTransport: (type: TransportType) => void;
   onOpenHotspotWizard?: () => void;
   onOpenBluetoothWizard?: () => void;
+  onOpenGattWizard?: () => void;
   isHotspotActive?: boolean;
   isBluetoothActive?: boolean;
+  isGattActive?: boolean;
   gatewayIp?: string;
+  bleMtuSize?: number;
 }
 
 export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
@@ -17,9 +20,12 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
   onChangeTransport,
   onOpenHotspotWizard,
   onOpenBluetoothWizard,
+  onOpenGattWizard,
   isHotspotActive = false,
   isBluetoothActive = false,
+  isGattActive = false,
   gatewayIp,
+  bleMtuSize = 240,
 }) => {
   return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-900/90 p-3.5 space-y-3">
@@ -60,6 +66,23 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
                 className="text-xs text-neutral-400 hover:text-neutral-200 underline underline-offset-2 transition-colors"
               >
                 Bluetooth Setup
+              </button>
+            )}
+          </div>
+        )}
+
+        {currentTransport === 'bluetooth_ble' && (
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono bg-indigo-500/10 text-indigo-400 border border-indigo-500/30">
+              <Radio className="w-3 h-3 text-indigo-400 animate-pulse" />
+              <span>BLE GATT Active · MTU {bleMtuSize}B</span>
+            </span>
+            {onOpenGattWizard && (
+              <button
+                onClick={onOpenGattWizard}
+                className="text-xs text-neutral-400 hover:text-neutral-200 underline underline-offset-2 transition-colors"
+              >
+                GATT Slicer
               </button>
             )}
           </div>
@@ -122,7 +145,7 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
           </p>
         </button>
 
-        {/* 3. Native Bluetooth A2DP Sink (Sprint 2 Complete!) */}
+        {/* 3. Native Bluetooth A2DP Sink */}
         <button
           onClick={() => {
             onChangeTransport('bluetooth_a2dp');
@@ -154,21 +177,37 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
           </p>
         </button>
 
-        {/* 4. Bluetooth LE (GATT) (Sprint 3) */}
-        <div className="p-2.5 rounded-lg border border-neutral-800/60 bg-neutral-950/30 text-neutral-500 cursor-not-allowed">
+        {/* 4. Bluetooth LE (GATT) - SPRINT 3 ACTIVE! */}
+        <button
+          onClick={() => {
+            onChangeTransport('bluetooth_ble');
+            if (onOpenGattWizard) {
+              onOpenGattWizard();
+            }
+          }}
+          className={`p-2.5 rounded-lg border text-left transition-all relative ${
+            currentTransport === 'bluetooth_ble'
+              ? 'border-indigo-500 bg-indigo-950/25 text-neutral-100 shadow-sm'
+              : 'border-neutral-800 bg-neutral-950/60 text-neutral-400 hover:border-neutral-700 hover:text-neutral-200'
+          }`}
+        >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Radio className="w-4 h-4 text-neutral-600" />
-              <span className="text-xs font-semibold text-neutral-400">Bluetooth LE</span>
+              <Radio
+                className={`w-4 h-4 ${
+                  currentTransport === 'bluetooth_ble' ? 'text-indigo-400' : 'text-neutral-400'
+                }`}
+              />
+              <span className="text-xs font-semibold">Bluetooth LE</span>
             </div>
-            <span className="text-[9px] uppercase font-mono px-1 rounded bg-neutral-800 text-neutral-400">
-              Sprint 3
+            <span className="text-[10px] font-mono text-indigo-400 font-bold bg-indigo-500/10 px-1.5 py-0.5 rounded">
+              GATT
             </span>
           </div>
-          <p className="text-[11px] text-neutral-600 mt-1 leading-tight">
-            Experimental GATT custom audio packet stream
+          <p className="text-[11px] text-neutral-400 mt-1 leading-tight">
+            Custom BLE GATT audio characteristic stream
           </p>
-        </div>
+        </button>
       </div>
     </div>
   );

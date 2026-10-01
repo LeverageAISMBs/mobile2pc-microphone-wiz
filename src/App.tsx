@@ -8,6 +8,7 @@ import { DriverFrameworkHub } from './components/DriverFrameworkHub';
 import { DevicePairingModal } from './components/DevicePairingModal';
 import { HotspotWizardModal } from './components/HotspotWizardModal';
 import { BluetoothBridgeModal } from './components/BluetoothBridgeModal';
+import { BluetoothGattModal } from './components/BluetoothGattModal';
 import {
   Radio,
   Wifi,
@@ -28,6 +29,7 @@ export default function App() {
   const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
   const [isHotspotWizardOpen, setIsHotspotWizardOpen] = useState(false);
   const [isBluetoothModalOpen, setIsBluetoothModalOpen] = useState(false);
+  const [isGattModalOpen, setIsGattModalOpen] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [peerCounts, setPeerCounts] = useState({ rx: 1, tx: 0 });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -36,6 +38,7 @@ export default function App() {
   const [currentTransport, setCurrentTransport] = useState<TransportType>('lan_wifi');
   const [directGatewayIp, setDirectGatewayIp] = useState<string | undefined>(undefined);
   const [activeBtDeviceId, setActiveBtDeviceId] = useState<string>('default');
+  const [bleMtuSize, setBleMtuSize] = useState<number>(240);
 
   // Audio Processing State
   const [isTransmitting, setIsTransmitting] = useState(false);
@@ -105,6 +108,8 @@ export default function App() {
         setFrameSizeMs(2.5);
       } else if (transportParam === 'bluetooth_a2dp') {
         setCurrentTransport('bluetooth_a2dp');
+      } else if (transportParam === 'bluetooth_ble') {
+        setCurrentTransport('bluetooth_ble');
       }
 
       if (roleParam === 'transmitter') {
@@ -143,7 +148,7 @@ export default function App() {
       directGatewayIp
     );
 
-    streamer.connectTransport(currentTransport, directGatewayIp);
+    streamer.connectTransport(currentTransport, directGatewayIp, undefined, bleMtuSize);
     streamerRef.current = streamer;
 
     const an = role === 'transmitter' ? streamer.getInputAnalyser() : streamer.getOutputAnalyser();
@@ -259,7 +264,7 @@ export default function App() {
     return false;
   };
 
-  // Hotspot Preset Activation (Sprint 1 Feature)
+  // Hotspot Preset Activation (Sprint 1)
   const handleApplyHotspotPreset = (gatewayIp: string) => {
     setDirectGatewayIp(gatewayIp);
     setCurrentTransport('mobile_hotspot');
@@ -284,7 +289,7 @@ export default function App() {
     }
   };
 
-  // Bluetooth A2DP Bridge Activation (Sprint 2 Feature)
+  // Bluetooth A2DP Bridge Activation (Sprint 2)
   const handleActivateBluetoothBridge = async (deviceId: string, latencyOffsetMs: number) => {
     setActiveBtDeviceId(deviceId);
     setCurrentTransport('bluetooth_a2dp');
@@ -309,6 +314,31 @@ export default function App() {
       return ok;
     }
     return true;
+  };
+
+  // Bluetooth LE GATT Activation (Sprint 3)
+  const handleActivateGattTransport = async (mtuSize: number) => {
+    setBleMtuSize(mtuSize);
+    setCurrentTransport('bluetooth_ble');
+
+    const bleBuffer: BufferConfig = {
+      bufferSizeMs: 25,
+      adaptiveJitter: true,
+      packetLossConcealment: true,
+      dropLatePackets: true,
+      sampleRate: 48000,
+      channels: 2,
+      frameSizeMs: 10,
+    };
+    setBufferConfig(bleBuffer);
+    setFrameSizeMs(10);
+    setActiveCodec('opus');
+
+    if (streamerRef.current) {
+      streamerRef.current.updateBufferConfig(bleBuffer);
+      streamerRef.current.setCodec('opus');
+      await streamerRef.current.connectTransport('bluetooth_ble', undefined, undefined, mtuSize);
+    }
   };
 
   return (
@@ -380,6 +410,14 @@ export default function App() {
             >
               <Bluetooth className="w-3.5 h-3.5 text-cyan-400" />
               <span>Bluetooth A2DP</span>
+            </button>
+          ) : currentTransport === 'bluetooth_ble' ? (
+            <button
+              onClick={() => setIsGattModalOpen(true)}
+              className="hidden sm:flex items-center gap-1.5 text-xs font-mono text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded border border-indigo-500/30 hover:bg-indigo-500/20 transition-colors"
+            >
+              <Radio className="w-3.5 h-3.5 text-indigo-400" />
+              <span>BLE GATT: {bleMtuSize}B</span>
             </button>
           ) : (
             <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-neutral-400 bg-neutral-900 px-2.5 py-1 rounded border border-neutral-800">
@@ -483,6 +521,8 @@ export default function App() {
             onChangeTransport={setCurrentTransport}
             onOpenHotspotWizard={() => setIsHotspotWizardOpen(true)}
             onOpenBluetoothWizard={() => setIsBluetoothModalOpen(true)}
+            onOpenGattWizard={() => setIsGattModalOpen(true)}
+            bleMtuSize={bleMtuSize}
             onSelectAudioSink={handleSelectAudioSink}
           />
         )}
@@ -507,6 +547,8 @@ export default function App() {
             onChangeTransport={setCurrentTransport}
             onOpenHotspotWizard={() => setIsHotspotWizardOpen(true)}
             onOpenBluetoothWizard={() => setIsBluetoothModalOpen(true)}
+            onOpenGattWizard={() => setIsGattModalOpen(true)}
+            bleMtuSize={bleMtuSize}
           />
         )}
 
@@ -572,6 +614,8 @@ export default function App() {
                   onChangeTransport={setCurrentTransport}
                   onOpenHotspotWizard={() => setIsHotspotWizardOpen(true)}
                   onOpenBluetoothWizard={() => setIsBluetoothModalOpen(true)}
+                  onOpenGattWizard={() => setIsGattModalOpen(true)}
+                  bleMtuSize={bleMtuSize}
                 />
               </div>
 
@@ -602,6 +646,8 @@ export default function App() {
                   onChangeTransport={setCurrentTransport}
                   onOpenHotspotWizard={() => setIsHotspotWizardOpen(true)}
                   onOpenBluetoothWizard={() => setIsBluetoothModalOpen(true)}
+                  onOpenGattWizard={() => setIsGattModalOpen(true)}
+                  bleMtuSize={bleMtuSize}
                   onSelectAudioSink={handleSelectAudioSink}
                 />
               </div>
@@ -641,6 +687,31 @@ export default function App() {
         activeInputDeviceId={activeBtDeviceId}
       />
 
+      {/* Web Bluetooth GATT Modal (Sprint 3) */}
+      <BluetoothGattModal
+        isOpen={isGattModalOpen}
+        onClose={() => setIsGattModalOpen(false)}
+        onActivateGattTransport={handleActivateGattTransport}
+        currentMtuSize={bleMtuSize}
+        telemetry={telemetry}
+        activeCodec={activeCodec}
+        onChangeCodec={handleChangeCodec}
+        onUpdateBleSettings={(mtu, phy, interval) => {
+          setBleMtuSize(mtu);
+          if (streamerRef.current) {
+            streamerRef.current.setBleMtuPayloadSize(mtu);
+            if (phy) streamerRef.current.setBlePhyMode(phy);
+            if (interval) streamerRef.current.setBleConnectionInterval(interval);
+          }
+        }}
+        onRunMtuBenchmark={async () => {
+          if (streamerRef.current) {
+            return await streamerRef.current.runBleMtuBenchmark();
+          }
+          return [];
+        }}
+      />
+
       {/* Clean footer */}
       <footer className="border-t border-neutral-900 bg-neutral-950 px-6 py-4 text-xs text-neutral-500 flex flex-col sm:flex-row items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -653,6 +724,8 @@ export default function App() {
               ? 'Direct SoftAP (<5ms)'
               : currentTransport === 'bluetooth_a2dp'
               ? 'Bluetooth A2DP Sink'
+              : currentTransport === 'bluetooth_ble'
+              ? `BLE GATT (${bleMtuSize}B MTU)`
               : 'Wi-Fi LAN'}
           </span>
         </div>

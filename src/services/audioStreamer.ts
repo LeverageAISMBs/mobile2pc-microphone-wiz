@@ -2,7 +2,8 @@ import { AudioCodec, BufferConfig, StreamTelemetry } from '../types/audio';
 import { CodecEngine } from './codecEngine';
 import { JitterBuffer } from './jitterBuffer';
 import { WebSocketTransport } from './transports/WebSocketTransport';
-import { TransportType, TransportState } from './transports/AudioTransport';
+import { WebBluetoothGattTransport } from './transports/WebBluetoothGattTransport';
+import { AudioTransport, TransportType, TransportState } from './transports/AudioTransport';
 
 export type AudioSourceType = 'mic' | 'sine1k' | 'pinknoise' | 'guitar' | 'drums';
 
@@ -20,7 +21,7 @@ export class AudioStreamer {
   private callbacks: StreamerCallbacks;
 
   // Transport Layer
-  private transport: WebSocketTransport;
+  private transport: AudioTransport;
   private currentTransportType: TransportType = 'lan_wifi';
   private directGatewayIp?: string;
   private selectedInputDeviceId?: string;
@@ -170,16 +171,38 @@ export class AudioStreamer {
   public async connectTransport(
     type: TransportType = this.currentTransportType,
     gatewayIp?: string,
-    customHost?: string
+    customHost?: string,
+    bleMtuSize?: number
   ) {
     this.currentTransportType = type;
     this.directGatewayIp = gatewayIp;
 
-    await this.transport.connect({
-      type: type === 'mobile_hotspot' ? 'mobile_hotspot' : 'lan_wifi',
-      directGatewayIp: gatewayIp,
-      customHost,
-    });
+    if (type === 'bluetooth_ble') {
+      this.transport.disconnect();
+      this.transport = new WebBluetoothGattTransport({
+        role: this.role,
+        sessionCode: this.sessionCode,
+        mtuPayloadSize: bleMtuSize || 240,
+      });
+      this.setupTransportListeners();
+      await this.transport.connect();
+    } else {
+      if (!(this.transport instanceof WebSocketTransport)) {
+        this.transport.disconnect();
+        this.transport = new WebSocketTransport({
+          type: type === 'mobile_hotspot' ? 'mobile_hotspot' : 'lan_wifi',
+          sessionCode: this.sessionCode,
+          role: this.role,
+          directGatewayIp: gatewayIp,
+        });
+        this.setupTransportListeners();
+      }
+      await (this.transport as WebSocketTransport).connect({
+        type: type === 'mobile_hotspot' ? 'mobile_hotspot' : 'lan_wifi',
+        directGatewayIp: gatewayIp,
+        customHost,
+      });
+    }
   }
 
   public async setAudioSink(deviceId: string): Promise<boolean> {
@@ -489,6 +512,12 @@ export class AudioStreamer {
         telemetry.rttMs = 35.0;
         telemetry.signalRssi = -52;
         telemetry.bitrateKbps = 328;
+      } else if (this.currentTransportType === 'bluetooth_ble') {
+        telemetry.audioLatencyMs = Math.round((transportTel.hopLatencyMs + telemetry.bufferFillMs + 4.0) * 10) / 10;
+        telemetry.rttMs = transportTel.rttMs;
+        telemetry.signalRssi = transportTel.rssi;
+        telemetry.bitrateKbps = transportTel.throughputKbps;
+        telemetry.ble = transportTel.ble;
       }
 
       this.callbacks.onTelemetry(telemetry);
@@ -543,6 +572,38 @@ export class AudioStreamer {
 
   public getOutputAnalyser(): AnalyserNode | null {
     return this.outputAnalyser;
+  }
+
+  public getBleTransport(): WebBluetoothGattTransport | null {
+    if (this.transport instanceof WebBluetoothGattTransport) {
+      return this.transport;
+    }
+    return null;
+  }
+
+  public setBleMtuPayloadSize(bytes: number) {
+    if (this.transport instanceof WebBluetoothGattTransport) {
+      this.transport.setMtuPayloadSize(bytes);
+    }
+  }
+
+  public setBlePhyMode(mode: '1M' | '2M' | 'Coded') {
+    if (this.transport instanceof WebBluetoothGattTransport) {
+      this.transport.setPhyMode(mode);
+    }
+  }
+
+  public setBleConnectionInterval(intervalMs: number) {
+    if (this.transport instanceof WebBluetoothGattTransport) {
+      this.transport.setConnectionInterval(intervalMs);
+    }
+  }
+
+  public async runBleMtuBenchmark(customPayloads?: number[]) {
+    if (this.transport instanceof WebBluetoothGattTransport) {
+      return await this.transport.runMtuBenchmark(customPayloads);
+    }
+    return [];
   }
 
   public destroy() {
