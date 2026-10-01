@@ -1,0 +1,10 @@
+{
+  "name": "PulseCast - Low-Latency Wi-Fi Audio Streamer",
+  "description": "High-fidelity, ultra-low latency mobile-to-PC Wi-Fi audio streaming with customizable jitter buffer, Opus/PCM codecs, automatic network discovery, and Windows/Linux open-source virtual driver framework integration.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
