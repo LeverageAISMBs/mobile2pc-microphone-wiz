@@ -7,11 +7,13 @@ import { MobileTransmitterView } from './components/MobileTransmitterView';
 import { DriverFrameworkHub } from './components/DriverFrameworkHub';
 import { DevicePairingModal } from './components/DevicePairingModal';
 import { HotspotWizardModal } from './components/HotspotWizardModal';
+import { BluetoothBridgeModal } from './components/BluetoothBridgeModal';
 import {
   Radio,
   Wifi,
   QrCode,
   Flame,
+  Bluetooth,
   Split,
   Play,
   Square,
@@ -25,6 +27,7 @@ export default function App() {
   const [sessionCode, setSessionCode] = useState<string>('PULSE-89');
   const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
   const [isHotspotWizardOpen, setIsHotspotWizardOpen] = useState(false);
+  const [isBluetoothModalOpen, setIsBluetoothModalOpen] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [peerCounts, setPeerCounts] = useState({ rx: 1, tx: 0 });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -32,6 +35,7 @@ export default function App() {
   // Transport State
   const [currentTransport, setCurrentTransport] = useState<TransportType>('lan_wifi');
   const [directGatewayIp, setDirectGatewayIp] = useState<string | undefined>(undefined);
+  const [activeBtDeviceId, setActiveBtDeviceId] = useState<string>('default');
 
   // Audio Processing State
   const [isTransmitting, setIsTransmitting] = useState(false);
@@ -96,10 +100,11 @@ export default function App() {
 
       if (transportParam === 'mobile_hotspot') {
         setCurrentTransport('mobile_hotspot');
-        // Apply optimized hotspot preset on mobile receiver
         setBufferConfig((prev) => ({ ...prev, bufferSizeMs: 5, frameSizeMs: 2.5 }));
         setActiveCodec('pcm24');
         setFrameSizeMs(2.5);
+      } else if (transportParam === 'bluetooth_a2dp') {
+        setCurrentTransport('bluetooth_a2dp');
       }
 
       if (roleParam === 'transmitter') {
@@ -254,12 +259,11 @@ export default function App() {
     return false;
   };
 
-  // Optimized Hotspot Preset Application (Sprint 1 Feature)
+  // Hotspot Preset Activation (Sprint 1 Feature)
   const handleApplyHotspotPreset = (gatewayIp: string) => {
     setDirectGatewayIp(gatewayIp);
     setCurrentTransport('mobile_hotspot');
 
-    // Preset: 5ms buffer, Linear PCM 24-bit 48kHz studio master, 2.5ms chunk frames
     const fastBuffer: BufferConfig = {
       bufferSizeMs: 5,
       adaptiveJitter: true,
@@ -278,6 +282,33 @@ export default function App() {
       streamerRef.current.setCodec('pcm24');
       streamerRef.current.connectTransport('mobile_hotspot', gatewayIp);
     }
+  };
+
+  // Bluetooth A2DP Bridge Activation (Sprint 2 Feature)
+  const handleActivateBluetoothBridge = async (deviceId: string, latencyOffsetMs: number) => {
+    setActiveBtDeviceId(deviceId);
+    setCurrentTransport('bluetooth_a2dp');
+
+    const btBuffer: BufferConfig = {
+      bufferSizeMs: 15,
+      adaptiveJitter: true,
+      packetLossConcealment: true,
+      dropLatePackets: true,
+      sampleRate: 48000,
+      channels: 2,
+      frameSizeMs: 10,
+    };
+    setBufferConfig(btBuffer);
+    setFrameSizeMs(10);
+
+    if (streamerRef.current) {
+      streamerRef.current.setBluetoothLatencyOffset(latencyOffsetMs);
+      streamerRef.current.updateBufferConfig(btBuffer);
+      const ok = await streamerRef.current.startBluetoothReceiverBridge(deviceId);
+      setAnalyser(streamerRef.current.getOutputAnalyser() || streamerRef.current.getInputAnalyser());
+      return ok;
+    }
+    return true;
   };
 
   return (
@@ -341,6 +372,14 @@ export default function App() {
             >
               <Flame className="w-3.5 h-3.5 text-amber-400" />
               <span>Hotspot: {directGatewayIp || '192.168.43.1'}</span>
+            </button>
+          ) : currentTransport === 'bluetooth_a2dp' ? (
+            <button
+              onClick={() => setIsBluetoothModalOpen(true)}
+              className="hidden sm:flex items-center gap-1.5 text-xs font-mono text-cyan-400 bg-cyan-500/10 px-2.5 py-1 rounded border border-cyan-500/30 hover:bg-cyan-500/20 transition-colors"
+            >
+              <Bluetooth className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Bluetooth A2DP</span>
             </button>
           ) : (
             <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-neutral-400 bg-neutral-900 px-2.5 py-1 rounded border border-neutral-800">
@@ -443,6 +482,7 @@ export default function App() {
             currentTransport={currentTransport}
             onChangeTransport={setCurrentTransport}
             onOpenHotspotWizard={() => setIsHotspotWizardOpen(true)}
+            onOpenBluetoothWizard={() => setIsBluetoothModalOpen(true)}
             onSelectAudioSink={handleSelectAudioSink}
           />
         )}
@@ -466,6 +506,7 @@ export default function App() {
             currentTransport={currentTransport}
             onChangeTransport={setCurrentTransport}
             onOpenHotspotWizard={() => setIsHotspotWizardOpen(true)}
+            onOpenBluetoothWizard={() => setIsBluetoothModalOpen(true)}
           />
         )}
 
@@ -530,6 +571,7 @@ export default function App() {
                   currentTransport={currentTransport}
                   onChangeTransport={setCurrentTransport}
                   onOpenHotspotWizard={() => setIsHotspotWizardOpen(true)}
+                  onOpenBluetoothWizard={() => setIsBluetoothModalOpen(true)}
                 />
               </div>
 
@@ -559,6 +601,7 @@ export default function App() {
                   currentTransport={currentTransport}
                   onChangeTransport={setCurrentTransport}
                   onOpenHotspotWizard={() => setIsHotspotWizardOpen(true)}
+                  onOpenBluetoothWizard={() => setIsBluetoothModalOpen(true)}
                   onSelectAudioSink={handleSelectAudioSink}
                 />
               </div>
@@ -590,6 +633,14 @@ export default function App() {
         onApplyHotspotPreset={handleApplyHotspotPreset}
       />
 
+      {/* Native Bluetooth A2DP Audio Bridge Modal */}
+      <BluetoothBridgeModal
+        isOpen={isBluetoothModalOpen}
+        onClose={() => setIsBluetoothModalOpen(false)}
+        onActivateBluetoothBridge={handleActivateBluetoothBridge}
+        activeInputDeviceId={activeBtDeviceId}
+      />
+
       {/* Clean footer */}
       <footer className="border-t border-neutral-900 bg-neutral-950 px-6 py-4 text-xs text-neutral-500 flex flex-col sm:flex-row items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -598,7 +649,11 @@ export default function App() {
           <span>Open-Source Driver Framework</span>
           <span>·</span>
           <span className="font-mono text-neutral-400">
-            {currentTransport === 'mobile_hotspot' ? 'Direct SoftAP (<5ms)' : 'Wi-Fi LAN'}
+            {currentTransport === 'mobile_hotspot'
+              ? 'Direct SoftAP (<5ms)'
+              : currentTransport === 'bluetooth_a2dp'
+              ? 'Bluetooth A2DP Sink'
+              : 'Wi-Fi LAN'}
           </span>
         </div>
         <div className="font-mono text-[11px] tabular-nums text-neutral-400">

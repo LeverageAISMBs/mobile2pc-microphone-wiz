@@ -45,6 +45,7 @@ interface PcReceiverViewProps {
   currentTransport: TransportType;
   onChangeTransport: (type: TransportType) => void;
   onOpenHotspotWizard: () => void;
+  onOpenBluetoothWizard?: () => void;
   onSelectAudioSink?: (sinkId: string) => Promise<boolean>;
 }
 
@@ -72,6 +73,7 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
   currentTransport,
   onChangeTransport,
   onOpenHotspotWizard,
+  onOpenBluetoothWizard,
   onSelectAudioSink,
 }) => {
   const [outputDevices, setOutputDevices] = useState<{ deviceId: string; label: string }[]>([]);
@@ -110,12 +112,14 @@ export const PcReceiverView: React.FC<PcReceiverViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Transport Mode Switcher (LAN Wi-Fi vs Mobile Hotspot) */}
+      {/* Transport Mode Switcher (LAN Wi-Fi vs Mobile Hotspot vs Bluetooth A2DP) */}
       <TransportModeSelector
         currentTransport={currentTransport}
         onChangeTransport={onChangeTransport}
         onOpenHotspotWizard={onOpenHotspotWizard}
+        onOpenBluetoothWizard={onOpenBluetoothWizard}
         isHotspotActive={currentTransport === 'mobile_hotspot'}
+        isBluetoothActive={currentTransport === 'bluetooth_a2dp'}
         gatewayIp={telemetry.gatewayIp}
       />
 

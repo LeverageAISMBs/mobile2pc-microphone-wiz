@@ -35,6 +35,7 @@ interface MobileTransmitterViewProps {
   currentTransport?: TransportType;
   onChangeTransport?: (type: TransportType) => void;
   onOpenHotspotWizard?: () => void;
+  onOpenBluetoothWizard?: () => void;
 }
 
 export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
@@ -55,6 +56,7 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
   currentTransport = 'lan_wifi',
   onChangeTransport,
   onOpenHotspotWizard,
+  onOpenBluetoothWizard,
 }) => {
   const sources: { id: AudioSourceType; label: string; icon: React.ReactNode }[] = [
     { id: 'mic', label: 'Phone Mic', icon: <Mic className="w-4 h-4" /> },
@@ -87,6 +89,13 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
                 <Flame className="w-3 h-3 text-amber-400" />
                 <span>Hotspot</span>
               </button>
+            ) : currentTransport === 'bluetooth_a2dp' ? (
+              <button
+                onClick={onOpenBluetoothWizard}
+                className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-mono text-cyan-400 bg-cyan-500/10 border border-cyan-500/30 rounded"
+              >
+                <span>Bluetooth</span>
+              </button>
             ) : (
               <button
                 onClick={onOpenHotspotWizard}
@@ -109,30 +118,43 @@ export const MobileTransmitterView: React.FC<MobileTransmitterViewProps> = ({
 
         {/* Transport Link Switcher on Mobile */}
         {onChangeTransport && (
-          <div className="mt-3 grid grid-cols-2 gap-1.5 p-1 bg-neutral-950 rounded border border-neutral-800 text-xs">
+          <div className="mt-3 grid grid-cols-3 gap-1 p-1 bg-neutral-950 rounded border border-neutral-800 text-xs">
             <button
               onClick={() => onChangeTransport('lan_wifi')}
-              className={`py-1 rounded font-medium transition-colors ${
+              className={`py-1 rounded font-medium transition-colors truncate ${
                 currentTransport === 'lan_wifi'
                   ? 'bg-neutral-800 text-emerald-400 shadow-sm'
                   : 'text-neutral-400 hover:text-neutral-200'
               }`}
             >
-              Standard LAN Wi-Fi
+              Wi-Fi
             </button>
             <button
               onClick={() => {
                 onChangeTransport('mobile_hotspot');
                 if (onOpenHotspotWizard) onOpenHotspotWizard();
               }}
-              className={`py-1 rounded font-medium transition-colors flex items-center justify-center gap-1 ${
+              className={`py-1 rounded font-medium transition-colors flex items-center justify-center gap-1 truncate ${
                 currentTransport === 'mobile_hotspot'
                   ? 'bg-amber-950/60 text-amber-400 border border-amber-500/40 shadow-sm'
                   : 'text-neutral-400 hover:text-amber-300'
               }`}
             >
               <Flame className="w-3 h-3 text-amber-400" />
-              <span>Mobile Hotspot</span>
+              <span>Hotspot</span>
+            </button>
+            <button
+              onClick={() => {
+                onChangeTransport('bluetooth_a2dp');
+                if (onOpenBluetoothWizard) onOpenBluetoothWizard();
+              }}
+              className={`py-1 rounded font-medium transition-colors flex items-center justify-center gap-1 truncate ${
+                currentTransport === 'bluetooth_a2dp'
+                  ? 'bg-cyan-950/60 text-cyan-400 border border-cyan-500/40 shadow-sm'
+                  : 'text-neutral-400 hover:text-cyan-300'
+              }`}
+            >
+              <span>Bluetooth</span>
             </button>
           </div>
         )}

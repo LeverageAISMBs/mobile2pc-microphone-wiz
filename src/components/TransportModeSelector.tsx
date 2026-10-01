@@ -6,7 +6,9 @@ interface TransportModeSelectorProps {
   currentTransport: TransportType;
   onChangeTransport: (type: TransportType) => void;
   onOpenHotspotWizard?: () => void;
+  onOpenBluetoothWizard?: () => void;
   isHotspotActive?: boolean;
+  isBluetoothActive?: boolean;
   gatewayIp?: string;
 }
 
@@ -14,7 +16,9 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
   currentTransport,
   onChangeTransport,
   onOpenHotspotWizard,
+  onOpenBluetoothWizard,
   isHotspotActive = false,
+  isBluetoothActive = false,
   gatewayIp,
 }) => {
   return (
@@ -39,6 +43,23 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
                 className="text-xs text-neutral-400 hover:text-neutral-200 underline underline-offset-2 transition-colors"
               >
                 Hotspot Guide
+              </button>
+            )}
+          </div>
+        )}
+
+        {currentTransport === 'bluetooth_a2dp' && (
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+              <Bluetooth className="w-3 h-3 text-cyan-400 animate-pulse" />
+              <span>Bluetooth A2DP Audio Sink Active</span>
+            </span>
+            {onOpenBluetoothWizard && (
+              <button
+                onClick={onOpenBluetoothWizard}
+                className="text-xs text-neutral-400 hover:text-neutral-200 underline underline-offset-2 transition-colors"
+              >
+                Bluetooth Setup
               </button>
             )}
           </div>
@@ -101,11 +122,43 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
           </p>
         </button>
 
-        {/* 3. Bluetooth LE (GATT) */}
+        {/* 3. Native Bluetooth A2DP Sink (Sprint 2 Complete!) */}
+        <button
+          onClick={() => {
+            onChangeTransport('bluetooth_a2dp');
+            if (onOpenBluetoothWizard) {
+              onOpenBluetoothWizard();
+            }
+          }}
+          className={`p-2.5 rounded-lg border text-left transition-all relative ${
+            currentTransport === 'bluetooth_a2dp'
+              ? 'border-cyan-500 bg-cyan-950/25 text-neutral-100 shadow-sm'
+              : 'border-neutral-800 bg-neutral-950/60 text-neutral-400 hover:border-neutral-700 hover:text-neutral-200'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Bluetooth
+                className={`w-4 h-4 ${
+                  currentTransport === 'bluetooth_a2dp' ? 'text-cyan-400' : 'text-neutral-400'
+                }`}
+              />
+              <span className="text-xs font-semibold">Bluetooth A2DP</span>
+            </div>
+            <span className="text-[10px] font-mono text-cyan-400 font-bold bg-cyan-500/10 px-1.5 py-0.5 rounded">
+              A2DP Sink
+            </span>
+          </div>
+          <p className="text-[11px] text-neutral-400 mt-1 leading-tight">
+            Direct Bluetooth phone-to-PC audio sink bridge
+          </p>
+        </button>
+
+        {/* 4. Bluetooth LE (GATT) (Sprint 3) */}
         <div className="p-2.5 rounded-lg border border-neutral-800/60 bg-neutral-950/30 text-neutral-500 cursor-not-allowed">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Bluetooth className="w-4 h-4 text-neutral-600" />
+              <Radio className="w-4 h-4 text-neutral-600" />
               <span className="text-xs font-semibold text-neutral-400">Bluetooth LE</span>
             </div>
             <span className="text-[9px] uppercase font-mono px-1 rounded bg-neutral-800 text-neutral-400">
@@ -113,23 +166,7 @@ export const TransportModeSelector: React.FC<TransportModeSelectorProps> = ({
             </span>
           </div>
           <p className="text-[11px] text-neutral-600 mt-1 leading-tight">
-            Custom GATT audio characteristic stream
-          </p>
-        </div>
-
-        {/* 4. Native Bluetooth A2DP */}
-        <div className="p-2.5 rounded-lg border border-neutral-800/60 bg-neutral-950/30 text-neutral-500 cursor-not-allowed">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Radio className="w-4 h-4 text-neutral-600" />
-              <span className="text-xs font-semibold text-neutral-400">A2DP Sink OS</span>
-            </div>
-            <span className="text-[9px] uppercase font-mono px-1 rounded bg-neutral-800 text-neutral-400">
-              Sprint 2
-            </span>
-          </div>
-          <p className="text-[11px] text-neutral-600 mt-1 leading-tight">
-            OS-level Bluetooth receiver loopback capture
+            Experimental GATT custom audio packet stream
           </p>
         </div>
       </div>
